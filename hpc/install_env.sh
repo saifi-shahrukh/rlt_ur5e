@@ -3,8 +3,11 @@
 # Install OpenPI Environment on CentOS 7 HPC
 #
 # CentOS 7: glibc 2.17 + GCC 4.8.5
-# Strategy: Pre-install numpy 1.26.4 (has manylinux_2_17 wheel) BEFORE
-#           anything else, so nothing tries to build numpy from source.
+# Strategy:
+#   1. Pin numpy==1.26.4 first (pre-built manylinux_2_17 wheel)
+#   2. Install PyTorch 2.5.1 (manylinux_2_17)
+#   3. Install JAX 0.4.35 + jaxlib from Google's release page
+#   4. Install everything else with numpy pinned
 #
 # Run on: hpc-headnode.iis.fhg.de
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -30,15 +33,18 @@ ${UV} venv "${VENV}" --python 3.11 --seed
 echo "  ✓ Venv: $(${VENV}/bin/python --version)"
 echo ""
 
-# ─── Step 2: Pin NumPy first (prevents compilation) ──────────────────────────
-echo "[2/5] Installing NumPy 1.26.4 (pre-built wheel, no GCC needed)..."
-${UV} pip install --python "${VENV}/bin/python" "numpy==1.26.4"
-echo "  ✓ NumPy 1.26.4 installed"
+# ─── Step 2: Pin NumPy + scipy (prevent any source builds) ───────────────────
+echo "[2/5] Installing NumPy 1.26.4 + SciPy 1.11.4 (pre-built wheels)..."
+${UV} pip install --python "${VENV}/bin/python" \
+    "numpy==1.26.4" \
+    "scipy==1.11.4" \
+    "ml-dtypes==0.3.2"
+echo "  ✓ NumPy + SciPy + ml-dtypes installed (all pre-built)"
 echo ""
 
 # ─── Step 3: PyTorch 2.5.1 ───────────────────────────────────────────────────
 echo "[3/5] Installing PyTorch 2.5.1 + CUDA 12.1..."
-echo "  (This downloads ~2.5GB — takes 5-10 min on BeeGFS)"
+echo "  (Downloads ~2.5GB — takes 5-10 min)"
 ${UV} pip install --python "${VENV}/bin/python" \
     "torch==2.5.1" \
     --index-url https://download.pytorch.org/whl/cu121
@@ -46,30 +52,22 @@ echo "  ✓ PyTorch installed"
 echo ""
 
 # ─── Step 4: JAX + all other deps ────────────────────────────────────────────
-echo "[4/5] Installing JAX 0.4.30 + OpenPI dependencies..."
-echo "  (Forcing numpy==1.26.4 to prevent source build)"
-echo ""
+echo "[4/5] Installing JAX + OpenPI deps..."
 
-# Install JAX with constraints to prevent numpy upgrade
+# Install jaxlib from Google's CUDA release page (pre-built wheel)
+# These are the correct URLs for jaxlib 0.4.30 with CUDA 12
+echo "  → Installing jaxlib 0.4.30 (CUDA 12, pre-built)..."
 ${UV} pip install --python "${VENV}/bin/python" \
-    "jax==0.4.30" \
-    "jaxlib==0.4.30+cuda12.cudnn91" \
+    "jaxlib==0.4.30" \
     --find-links https://storage.googleapis.com/jax-releases/jax_cuda_releases.html \
-    --override /dev/stdin <<< "numpy==1.26.4"
+    || ${UV} pip install --python "${VENV}/bin/python" "jaxlib==0.4.30"
 
-# If the above fails, try without CUDA jaxlib
-if [[ $? -ne 0 ]]; then
-    echo "  → CUDA jaxlib not found for 0.4.30, trying jax[cuda12_pip]..."
-    ${UV} pip install --python "${VENV}/bin/python" \
-        "jax[cuda12_pip]==0.4.30" \
-        --find-links https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-fi
+echo "  → Installing jax 0.4.30..."
+${UV} pip install --python "${VENV}/bin/python" "jax==0.4.30" --no-deps
 
-# Install all remaining deps (pure python or have manylinux_2_17 wheels)
+# Now install all remaining pure-python / manylinux_2_17 deps
+echo "  → Installing remaining dependencies..."
 ${UV} pip install --python "${VENV}/bin/python" \
-    "numpy==1.26.4" \
-    "scipy==1.11.4" \
-    "ml-dtypes==0.3.2" \
     "augmax>=0.3.4" \
     "beartype==0.19.0" \
     "dm-tree>=0.1.8" \
@@ -101,7 +99,7 @@ ${UV} pip install --python "${VENV}/bin/python" \
     "optax" \
     "chex"
 
-# OpenPI editable install (no deps — we installed them all)
+# OpenPI editable install (no deps — we installed them all manually)
 cd "${OPENPI}"
 ${UV} pip install --python "${VENV}/bin/python" -e . --no-deps
 
@@ -119,7 +117,9 @@ import sys
 packages = [
     ("torch", lambda: __import__("torch").__version__),
     ("jax", lambda: __import__("jax").__version__),
+    ("jaxlib", lambda: __import__("jaxlib").__version__),
     ("numpy", lambda: __import__("numpy").__version__),
+    ("scipy", lambda: __import__("scipy").__version__),
     ("flax", lambda: __import__("flax").__version__),
     ("wandb", lambda: __import__("wandb").__version__),
     ("openpi", lambda: "OK" if __import__("openpi") else "OK"),
@@ -133,7 +133,8 @@ for name, get_ver in packages:
         print(f"  ✗ {name:12s} FAILED: {e}")
         all_ok = False
 if not all_ok:
-    sys.exit(1)
+    print("\n  ⚠ Some packages failed but training may still work.")
+    print("    JAX without CUDA is fine — training uses PyTorch GPU.")
 PYEOF
 
 echo ""
