@@ -1,0 +1,53 @@
+# Virtual environments
+.venv/
+*.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Checkpoints (large, not pushed to git)
+checkpoints/
+*.pkl
+*.pt
+*.ckpt
+
+# Datasets (large)
+openpi_ur5e/datasets/
+datasets/
+
+# Logs
+*.log
+training_log.txt
+wandb/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# UV cache
+.uv/
+uv.lock
+
+# HuggingFace cache
+.cache/
+
+# Large model files
+*.safetensors
+*.bin
+*.msgpack
+
+# Compiled
+*.so
+*.egg-info/
+dist/
+build/
+
+# Orbax checkpoint temps
+*.orbax-checkpoint-tmp*

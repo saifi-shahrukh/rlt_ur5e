@@ -1,0 +1,33 @@
+[project]
+name = "rlt"
+version = "0.1.0"
+description = "RL Token (RLT) — Bootstrapping Online RL with Vision-Language-Action Models on UR5e"
+authors = [{name = "Shahrukh Saifi", email = "shahrukh.saifi20@gmail.com"}]
+requires-python = ">=3.10"
+readme = "../RLT_NEXT_STEPS.md"
+
+dependencies = [
+    "torch>=2.1",
+    "numpy>=1.24",
+    "gymnasium>=0.29",
+    "scipy>=1.10",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-timeout>=2.0",
+]
+full = [
+    "opencv-python>=4.8",
+    "pandas>=2.0",
+    "transformers>=4.40",
+]
+
+[tool.setuptools.packages.find]
+where = [".."]
+include = ["rlt*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --timeout=60"
