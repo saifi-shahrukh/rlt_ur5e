@@ -13,7 +13,7 @@ ssh -x saifi@hpc-headnode.iis.fhg.de
 cd /data/beegfs/home/saifi/
 git clone git@github.com:saifi-shahrukh/rlt_ur5e.git
 cd rlt_ur5e/hpc
-bash 01_setup.sh          # one-time: install uv, create venv
+bash 01_setup.sh          # one-time: install uv, create venv, wandb login
 ```
 
 ### From LOCAL machine (transfer dataset):
@@ -24,8 +24,9 @@ bash 02_transfer_dataset.sh
 
 ### Back on HPC:
 ```bash
-bash 03_train.sh all      # norm_stats → π0 + π0.5 (auto-chained)
+bash 03_train.sh both     # π0 + π0.5 in parallel
 bash 04_status.sh         # monitor progress
+# Watch live: https://wandb.ai → project 'rlt-ur5e'
 ```
 
 ### When done, from LOCAL:
@@ -55,9 +56,9 @@ bash 05_download_checkpoints.sh
 
 - **Config names:** `pi0_ur5e_peg_insertion_lora` / `pi05_ur5e_peg_insertion_lora`
 - **Dataset:** `saifi/ur5e-peg-insertion-dual` (9 demos, dual camera)
-- **Norm stats:** π0 already computed ✓ | π0.5 needs computing on cluster
+- **Norm stats:** All 3 configs pre-computed ✓ (pi0, pi0-FAST, pi0.5)
 - **Base weights:** Downloaded from `gs://openpi-assets/checkpoints/` (auto by training script)
-- **W&B:** Online logging enabled (set your API key in setup)
+- **W&B:** Online logging — see live loss curves at https://wandb.ai
 - **No containers needed** — uses `uv` venv directly
 
 ---

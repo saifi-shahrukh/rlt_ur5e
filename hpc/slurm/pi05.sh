@@ -3,6 +3,7 @@
 # SLURM: Train π0.5 LoRA (9 demos peg insertion)
 # Config: pi05_ur5e_peg_insertion_lora | batch_size=16 | 30k steps | ~3h
 # π0.5 = improved architecture with cross-attention VLM ↔ action expert
+# Norm stats: already in repo ✓
 # ═══════════════════════════════════════════════════════════════════════════════
 #SBATCH --job-name=pi05_peg
 #SBATCH --partition=gpu
@@ -26,11 +27,11 @@ export XLA_PYTHON_CLIENT_MEM_FRACTION=0.90
 export XLA_PYTHON_CLIENT_PREALLOCATE=true
 export HF_HOME="/data/beegfs/home/saifi/.cache/huggingface"
 
-# W&B online (make sure you ran `wandb login` during setup)
-export WANDB_PROJECT="rlt-ur5e-hpc"
-export WANDB_RUN_GROUP="pi05_peg_insertion"
-# If W&B not configured, uncomment next line:
-# export WANDB_MODE=offline
+# ─── W&B Online Logging ──────────────────────────────────────────────────────
+export WANDB_PROJECT="rlt-ur5e"
+export WANDB_RUN_GROUP="hpc-pi05"
+export WANDB_NAME="pi05_peg_9demos_$(date +%m%d_%H%M)"
+# WANDB_API_KEY should be set via `wandb login` or exported in env
 
 # ─── Run ─────────────────────────────────────────────────────────────────────
 cd "${OPENPI}"
@@ -43,9 +44,12 @@ echo "  Exp:      ${EXP_NAME}"
 echo "  Node:     $(hostname)"
 echo "  GPU:      $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -1)"
 echo "  Python:   $(python --version)"
-echo "  W&B:      ${WANDB_MODE:-online}"
+echo "  W&B:      project=${WANDB_PROJECT} | run=${WANDB_NAME}"
 echo "  Start:    $(date)"
 echo "═══════════════════════════════════════════════════════════════"
+echo ""
+
+nvidia-smi
 echo ""
 
 python scripts/train.py ${CONFIG} \

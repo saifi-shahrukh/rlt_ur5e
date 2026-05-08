@@ -113,20 +113,32 @@ fi
 echo "  ✓ Logs dir: ${LOG_DIR}"
 echo ""
 
-# ─── Step 6: W&B setup ───────────────────────────────────────────────────────
-echo "[6/6] Weights & Biases..."
+# ─── Step 6: W&B setup (for live training visibility) ────────────────────────
+echo "[6/6] Weights & Biases (online logging)..."
+source "${OPENPI}/.venv/bin/activate"
 if [[ -f "${HOME}/.netrc" ]] && grep -q "api.wandb.ai" "${HOME}/.netrc" 2>/dev/null; then
-    echo "  ✓ W&B already configured"
+    echo "  ✓ W&B already configured — training will be visible online"
 else
-    echo "  → W&B not configured. To enable online logging:"
+    echo "  → W&B not configured. Setting up now..."
     echo ""
-    echo "    source ${OPENPI}/.venv/bin/activate"
-    echo "    wandb login"
+    echo "  You need your API key from: https://wandb.ai/authorize"
     echo ""
-    echo "    Or set: export WANDB_API_KEY=<your-key>"
-    echo "    Get key at: https://wandb.ai/authorize"
-    echo ""
-    echo "  (Training will still work with WANDB_MODE=offline if you skip this)"
+    # Try to login interactively
+    if [[ -t 0 ]]; then
+        wandb login
+    else
+        echo "  Non-interactive shell. Run manually:"
+        echo "    source ${OPENPI}/.venv/bin/activate"
+        echo "    wandb login"
+        echo ""
+        echo "  Or add to ~/.bashrc:"
+        echo "    export WANDB_API_KEY=<your-key>"
+    fi
+fi
+# Set default W&B project
+if ! grep -q 'WANDB_PROJECT' ~/.bashrc 2>/dev/null; then
+    echo 'export WANDB_PROJECT="rlt-ur5e"' >> ~/.bashrc
+    echo "  ✓ Added WANDB_PROJECT=rlt-ur5e to ~/.bashrc"
 fi
 echo ""
 
