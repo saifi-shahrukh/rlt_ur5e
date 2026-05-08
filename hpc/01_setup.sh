@@ -84,12 +84,18 @@ echo ""
 
 # ─── Step 5: Install OpenPI ──────────────────────────────────────────────────
 echo "[5/7] Installing OpenPI..."
-# Activate
+# Activate — use full path to ensure we find pip
 export PATH="${VENV}/bin:${PATH}"
 export CONDA_PREFIX="${VENV}"
 
+# Verify pip is accessible
+if [[ ! -f "${VENV}/bin/pip" ]]; then
+    echo "  ⚠ pip not found in conda env. Installing..."
+    ${VENV}/bin/python -m ensurepip --upgrade 2>/dev/null || true
+fi
+
 # Check if openpi already installed
-if python -c "import openpi" 2>/dev/null; then
+if ${VENV}/bin/python -c "import openpi" 2>/dev/null; then
     echo "  ✓ OpenPI already installed"
 else
     echo "  → Installing openpi and dependencies..."
@@ -97,13 +103,13 @@ else
     echo ""
     cd "${OPENPI}"
     
-    # Install with pip (conda provides the glibc compatibility layer)
-    pip install --no-cache-dir -e . 2>&1 | tail -5
+    # Install with pip using full path (conda provides the glibc compatibility layer)
+    ${VENV}/bin/pip install --no-cache-dir -e . 2>&1 | tail -10
     
     echo ""
     echo "  → Verifying installation..."
-    python -c "import torch; print(f'  ✓ PyTorch {torch.__version__}')" || echo "  ⚠ PyTorch import failed"
-    python -c "import jax; print(f'  ✓ JAX {jax.__version__}')" || echo "  ⚠ JAX import failed"
+    ${VENV}/bin/python -c "import torch; print(f'  ✓ PyTorch {torch.__version__}')" || echo "  ⚠ PyTorch import failed"
+    ${VENV}/bin/python -c "import jax; print(f'  ✓ JAX {jax.__version__}')" || echo "  ⚠ JAX import failed"
     echo "  ✓ OpenPI installed"
 fi
 echo ""
