@@ -20,7 +20,12 @@ def make_mesh(num_fsdp_devices: int) -> jax.sharding.Mesh:
             f"Number of devices {jax.device_count()} must be divisible by the number of FSDP devices {num_fsdp_devices}."
         )
     mesh_shape = (jax.device_count() // num_fsdp_devices, num_fsdp_devices)
-    return jax.make_mesh(mesh_shape, (BATCH_AXIS, FSDP_AXIS))
+    # jax.make_mesh requires JAX >= 0.4.32; use compatible API for 0.4.30
+    if hasattr(jax, 'make_mesh'):
+        return jax.make_mesh(mesh_shape, (BATCH_AXIS, FSDP_AXIS))
+    else:
+        devices = np.array(jax.devices()).reshape(mesh_shape)
+        return jax.sharding.Mesh(devices, (BATCH_AXIS, FSDP_AXIS))
 
 
 @contextlib.contextmanager
