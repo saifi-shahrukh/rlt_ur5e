@@ -66,6 +66,7 @@ echo "  → Installing jax 0.4.30..."
 ${UV} pip install --python "${VENV}/bin/python" "jax==0.4.30" --no-deps
 
 # Now install all remaining pure-python / manylinux_2_17 deps
+# NOTE: lerobot installed with --no-deps to avoid rerun-sdk (needs glibc 2.28)
 echo "  → Installing remaining dependencies..."
 ${UV} pip install --python "${VENV}/bin/python" \
     "augmax>=0.3.4" \
@@ -81,7 +82,6 @@ ${UV} pip install --python "${VENV}/bin/python" \
     "gym-aloha>=0.1.1" \
     "imageio>=2.36.1" \
     "jaxtyping==0.2.36" \
-    "lerobot>=0.4.0" \
     "ml-collections==1.0.0" \
     "numpydantic>=1.6.6" \
     "opencv-python-headless>=4.8.0" \
@@ -98,6 +98,24 @@ ${UV} pip install --python "${VENV}/bin/python" \
     "polars>=1.0.0" \
     "optax" \
     "chex"
+
+# Install lerobot WITHOUT its deps (avoids rerun-sdk which needs glibc 2.28)
+# We only need lerobot.datasets for the data_loader
+echo "  → Installing lerobot (no-deps, avoids rerun-sdk)..."
+${UV} pip install --python "${VENV}/bin/python" "lerobot==0.4.0" --no-deps
+
+# Install lerobot's actual needed deps (subset, no rerun-sdk)
+${UV} pip install --python "${VENV}/bin/python" \
+    "datasets>=2.19" \
+    "huggingface-hub>=0.23" \
+    "pyarrow>=15.0" \
+    "torch" \
+    "torchvision" \
+    "safetensors" \
+    "draccus" \
+    "jsonlines" \
+    --index-url https://download.pytorch.org/whl/cu121 \
+    --extra-index-url https://pypi.org/simple/
 
 # OpenPI editable install (no deps — we installed them all manually)
 cd "${OPENPI}"
