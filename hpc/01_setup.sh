@@ -76,7 +76,12 @@ else
     done
     # Try module system
     if [[ -z "${PYTHON_BIN}" ]] && command -v module &> /dev/null; then
-        module load python/3.11 2>/dev/null || module load Python/3.11 2>/dev/null || true
+        module load python/3.11 2>/dev/null || \
+        module load Python/3.11 2>/dev/null || \
+        module load python/3.10 2>/dev/null || \
+        module load Python/3.10 2>/dev/null || \
+        module load anaconda 2>/dev/null || \
+        module load conda 2>/dev/null || true
         for p in python3.11 python3.12 python3.10; do
             if command -v $p &> /dev/null; then
                 PYTHON_BIN=$p
@@ -84,14 +89,16 @@ else
             fi
         done
     fi
+    # UV can install Python itself (no sudo needed!)
     if [[ -z "${PYTHON_BIN}" ]]; then
-        echo "  ERROR: No Python 3.10+ found!"
-        echo "  Try: module avail | grep -i python"
-        exit 1
+        echo "  → No system Python 3.11 found. Using UV to install Python..."
+        uv python install 3.11
+        PYTHON_BIN="3.11"  # uv will resolve this
+        echo "  ✓ Python 3.11 installed via uv"
     fi
-    echo "  → Creating venv with ${PYTHON_BIN}..."
+    echo "  → Creating venv with Python ${PYTHON_BIN}..."
     uv venv .venv --python ${PYTHON_BIN}
-    echo "  → Installing openpi (this may take a few minutes)..."
+    echo "  → Installing openpi (this may take several minutes)..."
     source .venv/bin/activate
     uv pip install -e .
     echo "  ✓ Venv created and openpi installed"
