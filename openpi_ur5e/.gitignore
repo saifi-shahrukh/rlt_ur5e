@@ -1,0 +1,56 @@
+# ═══════════════════════════════════════════════════════════════
+# Root .gitignore for openpi_ur5e monorepo
+# ═══════════════════════════════════════════════════════════════
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+dist/
+build/
+
+# Training artifacts (large files)
+checkpoints/
+wandb/
+data/
+
+# Datasets (too large for git, use HuggingFace Hub)
+datasets/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Session files (Pi terminal logs)
+pi-session-*.html
+
+# Logs
+*.log
+
+# Cache
+.cache/
+*.cache
+
+# Compiled extensions
+*.so
+*.dylib
+
+# Jupyter
+.ipynb_checkpoints/
+
+# UV lock files are kept (needed for reproducibility)
+# uv.lock

@@ -1,0 +1,18 @@
+[project]
+name = "lerobot_robot_ur5e"
+version = "0.1.0"
+description = "A lerobot plugin for the UR5e robot with a Robotiq gripper."
+requires-python = ">=3.11"
+
+# These are ONLY the dependencies needed for this specific robot
+dependencies = [
+    "lerobot", 
+    "ur-rtde>=1.6.2", 
+]
+
+[tool.setuptools]
+packages = ["lerobot_robot_ur5e"]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"

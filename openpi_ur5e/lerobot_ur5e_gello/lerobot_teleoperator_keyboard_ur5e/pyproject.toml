@@ -1,0 +1,18 @@
+[project]
+name = "lerobot_teleoperator_keyboard_ur5e"
+version = "0.1.0"
+description = "Keyboard Cartesian teleoperator for UR5e with freedrive support."
+requires-python = ">=3.11"
+dependencies = [
+    "lerobot",
+    "ur-rtde>=1.6.2",
+    "pynput",
+    "scipy",
+]
+
+[tool.setuptools]
+packages = ["lerobot_teleoperator_keyboard_ur5e"]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"

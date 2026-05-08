@@ -1,0 +1,142 @@
+import dataclasses
+from typing import TYPE_CHECKING
+
+import flax.nnx as nnx
+import jax
+import jax.numpy as jnp
+from typing_extensions import override
+
+from openpi.models import model as _model
+import openpi.models.gemma as _gemma
+import openpi.models.lora as lora
+from openpi.shared import array_typing as at
+import openpi.shared.nnx_utils as nnx_utils
+
+if TYPE_CHECKING:
+    from openpi.models.pi0 import Pi0
+
+
+@dataclasses.dataclass(frozen=True)
+class Pi0Config(_model.BaseModelConfig):
+    dtype: str = "bfloat16"
+    paligemma_variant: _gemma.Variant = "gemma_2b"
+    action_expert_variant: _gemma.Variant = "gemma_300m"
+    # Optional overrides for LoRA rank/alpha. Only applied when the variant includes LoRA.
+    paligemma_lora_rank: int | None = None
+    paligemma_lora_alpha: float | None = None
+    action_expert_lora_rank: int | None = None
+    action_expert_lora_alpha: float | None = None
+    # Optional LoRA for the SigLIP vision encoder MLP layers.
+    siglip_lora_rank: int | None = None
+    siglip_lora_alpha: float | None = None
+    # If true, freeze the paligemma backbone (expert 0) while fully fine-tuning the action expert (expert 1).
+    # This is a middle ground between full fine-tuning and LoRA: cheaper than full fine-tuning but more
+    # expressive than LoRA on the action expert. Should not be used together with LoRA variants.
+    freeze_paligemma: bool = False
+
+    # Set the model specific defaults.
+    action_dim: int = 32
+    action_horizon: int = 50
+    max_token_len: int = None  # type: ignore
+    # Pi05 has two differences from Pi0:
+    # - the state input is part of the discrete language tokens rather than a continuous input that is part of the suffix
+    # - the action expert uses adaRMSNorm to inject the flow matching timestep
+    pi05: bool = False
+    # This config option is not used directly by the model, but it is read by the ModelTransformFactory.
+    discrete_state_input: bool = None  # type: ignore
+
+    @property
+    def siglip_lora_config(self) -> lora.LoRAConfig | None:
+        if self.siglip_lora_rank is None:
+            return None
+        return lora.LoRAConfig(
+            rank=self.siglip_lora_rank,
+            alpha=self.siglip_lora_alpha or self.siglip_lora_rank,
+        )
+
+    def __post_init__(self):
+        if self.max_token_len is None:
+            object.__setattr__(self, "max_token_len", 200 if self.pi05 else 48)
+        if self.discrete_state_input is None:
+            object.__setattr__(self, "discrete_state_input", self.pi05)
+
+    @property
+    @override
+    def model_type(self) -> _model.ModelType:
+        if self.pi05:
+            return _model.ModelType.PI05
+        return _model.ModelType.PI0
+
+    @override
+    def create(self, rng: at.KeyArrayLike) -> "Pi0":
+        from openpi.models.pi0 import Pi0
+
+        return Pi0(self, rngs=nnx.Rngs(rng))
+
+    @override
+    def inputs_spec(self, *, batch_size: int = 1) -> tuple[_model.Observation, _model.Actions]:
+        image_spec = jax.ShapeDtypeStruct([batch_size, *_model.IMAGE_RESOLUTION, 3], jnp.float32)
+        image_mask_spec = jax.ShapeDtypeStruct([batch_size], jnp.bool_)
+
+        with at.disable_typechecking():
+            observation_spec = _model.Observation(
+                images={
+                    "base_0_rgb": image_spec,
+                    "left_wrist_0_rgb": image_spec,
+                    "right_wrist_0_rgb": image_spec,
+                },
+                image_masks={
+                    "base_0_rgb": image_mask_spec,
+                    "left_wrist_0_rgb": image_mask_spec,
+                    "right_wrist_0_rgb": image_mask_spec,
+                },
+                state=jax.ShapeDtypeStruct([batch_size, self.action_dim], jnp.float32),
+                tokenized_prompt=jax.ShapeDtypeStruct([batch_size, self.max_token_len], jnp.int32),
+                tokenized_prompt_mask=jax.ShapeDtypeStruct([batch_size, self.max_token_len], bool),
+            )
+        action_spec = jax.ShapeDtypeStruct([batch_size, self.action_horizon, self.action_dim], jnp.float32)
+
+        return observation_spec, action_spec
+
+    def get_freeze_filter(self) -> nnx.filterlib.Filter:
+        """Returns the freeze filter based on the model config."""
+        gemma_params_filter = nnx_utils.PathRegex(".*llm.*")
+        action_expert_params_filter = nnx_utils.PathRegex(".*llm.*_1.*")
+        if self.freeze_paligemma and "lora" not in self.paligemma_variant and "lora" not in self.action_expert_variant:
+            # Freeze all LLM and vision encoder params except the action expert (expert 1)
+            img_params_filter = nnx_utils.PathRegex(".*img.*")
+            return nnx.Any(
+                nnx.All(gemma_params_filter, nnx.Not(action_expert_params_filter)),
+                img_params_filter,
+            )
+
+        # Build freeze filter for LoRA configs. Region filters (disjoint param subtrees) are
+        # combined with Any, then narrowing filters (exclusions) are applied with All.
+        region_filters = []
+        narrowing_filters = []
+        has_lora = False
+
+        if "lora" in self.paligemma_variant:
+            region_filters.append(gemma_params_filter)
+            if "lora" not in self.action_expert_variant:
+                # If only paligemma has LoRA, exclude action expert params from freeze region.
+                narrowing_filters.append(nnx.Not(action_expert_params_filter))
+            has_lora = True
+        elif "lora" in self.action_expert_variant:
+            region_filters.append(action_expert_params_filter)
+            has_lora = True
+
+        if self.siglip_lora_rank is not None:
+            region_filters.append(nnx_utils.PathRegex(".*img.*"))
+            has_lora = True
+
+        if has_lora:
+            # Exclude all LoRA params from freezing (they must remain trainable).
+            narrowing_filters.append(nnx.Not(nnx_utils.PathRegex(".*lora.*")))
+
+        if not region_filters:
+            return nnx.Nothing
+
+        combined_region = nnx.Any(*region_filters) if len(region_filters) > 1 else region_filters[0]
+        all_filters = [combined_region, *narrowing_filters]
+        return nnx.All(*all_filters)

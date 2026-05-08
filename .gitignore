@@ -1,22 +1,32 @@
 # Virtual environments
 .venv/
-*.venv/
 venv/
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
 
-# Checkpoints (large, not pushed to git)
+# Checkpoints (large — regenerated via training)
 checkpoints/
-*.pkl
-*.pt
-*.ckpt
+openpi_ur5e/openpi-ur5e/checkpoints/
+ur5e_hil_serl/examples/checkpoints/
 
-# Datasets (large)
+# Datasets (re-collected / re-downloaded)
 openpi_ur5e/datasets/
 datasets/
 
-# Logs
+# Demo data & classifier data (large pickles)
+ur5e_hil_serl/examples/demo_data/
+ur5e_hil_serl/examples/classifier_data/
+ur5e_hil_serl/examples/classifier_ckpt/
+
+# Large model weights
+ur5e_hil_serl/examples/experiments/resnet10_params.pkl
+
+# Norm stats (regenerated per dataset via compute_norm_stats.py)
+openpi_ur5e/openpi-ur5e/assets/norm_stats/
+
+# Logs & wandb
 *.log
 training_log.txt
 wandb/
@@ -31,23 +41,27 @@ wandb/
 .DS_Store
 Thumbs.db
 
-# UV cache
+# UV / pip cache
 .uv/
 uv.lock
+*.whl
 
 # HuggingFace cache
 .cache/
 
-# Large model files
-*.safetensors
-*.bin
-*.msgpack
-
 # Compiled
 *.so
-*.egg-info/
 dist/
 build/
 
 # Orbax checkpoint temps
 *.orbax-checkpoint-tmp*
+
+# Session logs (browser exports)
+*.html
+
+# Large binary model files
+*.safetensors
+*.bin
+*.msgpack
+*.sqsh

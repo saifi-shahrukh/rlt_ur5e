@@ -1,0 +1,109 @@
+import copy
+import os
+import sys
+import warnings
+
+# Suppress noisy warnings
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+os.environ["QT_LOGGING_RULES"] = "*.debug=false;qt.qpa.*=false"
+warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+
+from tqdm import tqdm
+import numpy as np
+import pickle as pkl
+import datetime
+from absl import app, flags
+from pynput import keyboard
+
+from experiments.mappings import CONFIG_MAPPING
+
+FLAGS = flags.FLAGS
+flags.DEFINE_string("exp_name", None, "Name of experiment corresponding to folder.")
+flags.DEFINE_integer("successes_needed", 200, "Number of successful transistions to collect.")
+
+
+success_key = False
+def on_press(key):
+    global success_key
+    try:
+        if str(key) == 'Key.space':
+            success_key = True
+    except AttributeError:
+        pass
+
+def main(_):
+    global success_key
+    listener = keyboard.Listener(on_press=on_press)
+    listener.start()
+    assert FLAGS.exp_name in CONFIG_MAPPING, 'Experiment folder not found.'
+    config = CONFIG_MAPPING[FLAGS.exp_name]()
+    env = config.get_environment(fake_env=False, save_video=False, classifier=False)
+
+    obs, _ = env.reset()
+    print("Recording success/failure images. Press SPACE when peg is inserted.")
+    successes = []
+    failures = []
+    success_needed = FLAGS.successes_needed
+    pbar = tqdm(total=success_needed)
+
+    try:
+        while len(successes) < success_needed:
+            actions = np.zeros(env.action_space.sample().shape) 
+            next_obs, rew, done, truncated, info = env.step(actions)
+            if "intervene_action" in info:
+                actions = info["intervene_action"]
+
+            transition = copy.deepcopy(
+                dict(
+                    observations=obs,
+                    actions=actions,
+                    next_observations=next_obs,
+                    rewards=rew,
+                    masks=1.0 - done,
+                    dones=done,
+                )
+            )
+            obs = next_obs
+            if success_key:
+                successes.append(transition)
+                pbar.update(1)
+                success_key = False
+            else:
+                failures.append(transition)
+
+            if done or truncated:
+                obs, _ = env.reset()
+
+    except KeyboardInterrupt:
+        print(f"\nInterrupted. Got {len(successes)}/{success_needed} success images.")
+
+    finally:
+        pbar.close()
+        if not os.path.exists("./classifier_data"):
+            os.makedirs("./classifier_data")
+        uuid = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+        if successes:
+            file_name = f"./classifier_data/{FLAGS.exp_name}_{len(successes)}_success_images_{uuid}.pkl"
+            with open(file_name, "wb") as f:
+                pkl.dump(successes, f)
+            print(f"Saved {len(successes)} success transitions to {file_name}")
+
+        if failures:
+            file_name = f"./classifier_data/{FLAGS.exp_name}_{len(failures)}_failure_images_{uuid}.pkl"
+            with open(file_name, "wb") as f:
+                pkl.dump(failures, f)
+            print(f"Saved {len(failures)} failure transitions to {file_name}")
+
+        try:
+            env.close()
+        except Exception:
+            pass
+        os._exit(0)
+
+
+if __name__ == "__main__":
+    app.run(main)

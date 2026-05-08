@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Training artifacts (large binary files)
+examples/checkpoints/
+examples/demo_data/
+examples/classifier_data/
+examples/classifier_ckpt/
+
+# Simulation assets
+ur5e_sim/
+
+# Logs
+*.log
+wandb/
+/tmp/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# pytest
+.pytest_cache/
+
+# Byte-compiled
+*.pyc
+*.pyo

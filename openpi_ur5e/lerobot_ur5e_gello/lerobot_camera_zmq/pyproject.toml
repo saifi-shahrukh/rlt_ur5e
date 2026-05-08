@@ -1,0 +1,14 @@
+[project]
+name = "lerobot_camera_zmq"
+version = "0.1.0"
+description = "A lerobot plugin for zmq cameras."
+requires-python = ">=3.11"
+
+dependencies = [
+    "lerobot",
+    "pyzmq>=27.1.0"
+]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"

@@ -1,0 +1,79 @@
+[project]
+name = "ur5e-hil-serl"
+version = "0.1.0"
+description = "UR5e + Hand-E HIL-SERL: Human-in-the-Loop reinforcement learning for manipulation"
+readme = "README.md"
+requires-python = ">=3.10,<3.11"
+
+dependencies = [
+    # Core ML
+    "jax==0.6.2",
+    "jaxlib==0.6.2",
+    "jax-cuda12-pjrt==0.6.2",
+    "jax-cuda12-plugin==0.6.2",
+    "flax>=0.10.0",
+    "optax>=0.2.0",
+    "distrax>=0.1.5",
+    "chex>=0.1.80",
+    
+    # TensorFlow (needed by serl_launcher typing + tfp)
+    "tensorflow>=2.16.0",
+    "tf-keras",
+    "tensorflow-probability",
+    
+    # RL infrastructure
+    "gymnasium>=0.29.0",
+    "agentlace @ git+https://github.com/youliangtan/agentlace.git@cf2c337c5e3694cdbfc14831b239bd657bc4894d",
+    
+    # Robot control
+    "ur-rtde",
+    "scipy",
+    "numpy",
+    
+    # Cameras
+    "pyrealsense2",
+    "opencv-python",
+    
+    # Teleoperation
+    "pyspacemouse",
+    "hidapi",
+    "pynput",
+    
+    # Logging & utils
+    "wandb",
+    "tqdm",
+    "natsort",
+    "absl-py",
+    "ml_collections",
+    "matplotlib",
+    
+    # Simulation
+    "mujoco>=3.0.0",
+    "imageio",
+    "imageio-ffmpeg",
+]
+
+[project.optional-dependencies]
+kinect = ["pylibfreenect2"]
+dev = ["pytest", "pytest-timeout"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = [
+    "serl_robot_infra/ur_env",
+    "serl_robot_infra/robot_controllers",
+    "ur5e_sim/ur5e_sim",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["serl_robot_infra", "examples"]
+# test_pipeline.py uses real JAX/GPU and must run separately from mocked tests
+# Run: python -m pytest tests/test_pipeline.py -v
+# Or run all unit tests: python -m pytest tests/ --ignore=tests/test_pipeline.py -v
+markers = [
+    "integration: marks integration tests requiring GPU (run separately)",
+]
