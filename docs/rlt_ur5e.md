@@ -95,6 +95,6 @@ python -m rlt.examples.peg_insertion.train_rlt --eval_only --eval_episodes 20
 ```
 
 ## Checkpoints
-- **RL Token:** `checkpoints/rl_token/peg_insertion_real_v1.pt`
+- **RL Token:** `checkpoints/rl_token/peg_insertion_9demos_v1.pt`
 - **SAC Agent:** `checkpoints/rlt_runs/peg_insertion/best.pkl`
 - Both needed for RLT inference (VLA server + SAC + RL Token)

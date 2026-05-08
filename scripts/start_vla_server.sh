@@ -8,7 +8,7 @@ set -e
 
 VLA_DIR="/home/robolab-2/ur5e_hande_workspace/rlt_ur5e/openpi_ur5e/openpi-ur5e"
 CONFIG="pi0_fast_ur5e_peg_insertion_lora"
-CHECKPOINT_DIR="checkpoints/pi0_fast_ur5e_peg_insertion_lora/peg_insertion_run1/29999"
+CHECKPOINT_DIR="checkpoints/pi0_fast_ur5e_peg_insertion_lora/peg_insertion_9demos/29999"
 PORT=8000
 
 # Allow override
