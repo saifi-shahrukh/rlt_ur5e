@@ -23,8 +23,14 @@ ur5e_hil_serl/examples/classifier_ckpt/
 # Large model weights
 ur5e_hil_serl/examples/experiments/resnet10_params.pkl
 
-# Norm stats (regenerated per dataset via compute_norm_stats.py)
-openpi_ur5e/openpi-ur5e/assets/norm_stats/
+# Norm stats — KEEP peg insertion ones (needed for HPC training)
+# Exclude unrelated norm stats
+openpi_ur5e/openpi-ur5e/assets/pi0_ur5e/
+openpi_ur5e/openpi-ur5e/assets/pi05_ur5e_lora/
+openpi_ur5e/openpi-ur5e/assets/pi0_ur5e_fast_lora/
+openpi_ur5e/openpi-ur5e/assets/pi0_ur5e_lora/
+openpi_ur5e/openpi-ur5e/assets/pi0_ur_task*/
+openpi_ur5e/openpi-ur5e/assets/pi0_ur_tasks_merged*/
 
 # Logs & wandb
 *.log
