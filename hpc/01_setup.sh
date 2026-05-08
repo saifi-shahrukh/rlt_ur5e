@@ -3,154 +3,113 @@
 # HPC One-Time Setup
 # Run on: hpc-headnode.iis.fhg.de
 #
-# NOTE: CentOS 7 headnode has glibc 2.17, but PyTorch 2.7.1 needs glibc 2.28+.
-# Solution: Install inside a compute node (srun) OR use conda.
-# This script handles both approaches.
+# Problem: CentOS 7 has glibc 2.17, PyTorch 2.7.1 needs glibc 2.28+
+# Solution: Use conda (micromamba) which bundles its own glibc/libs
 # ═══════════════════════════════════════════════════════════════════════════════
 set -e
 
-echo "══════════════════���════════════════════════════════════════════"
-echo "  HPC Setup — π0/π0.5 Fine-tuning"
-echo "  Cluster: Fraunhofer IIS HPC (V100 32GB)"
 echo "═══════════════════════════════════════════════════════════════"
+echo "  HPC Setup — π0/π0.5 Fine-tuning"
+echo "  Cluster: Fraunhofer IIS HPC (V100 32GB, CentOS 7)"
+echo "  Strategy: micromamba + conda-forge (bypasses glibc 2.17)"
+echo "═══════════��═══════════════════════════════════════════════════"
 echo ""
 
 # ─── Configuration ───────────────────────────────────────────────────────────
 BEEGFS="/data/beegfs/home/saifi"
 PROJECT="${BEEGFS}/rlt_ur5e"
 OPENPI="${PROJECT}/openpi_ur5e/openpi-ur5e"
+VENV="${OPENPI}/.venv"
 DATASET_DIR="${BEEGFS}/datasets/saifi/ur5e-peg-insertion-dual"
 HF_SYMLINK="${HOME}/.cache/huggingface/lerobot/saifi/ur5e-peg-insertion-dual"
 LOG_DIR="${BEEGFS}/logs"
+MICROMAMBA="${HOME}/.local/bin/micromamba"
+
+export PATH="${HOME}/.local/bin:${HOME}/.cargo/bin:${PATH}"
 
 # ─── Step 1: Verify location ─────────────────────────────────────────────────
-echo "[1/6] Checking environment..."
+echo "[1/7] Checking environment..."
 if [[ ! -d "${BEEGFS}" ]]; then
     echo "  ERROR: BeeGFS not found at ${BEEGFS}"
     exit 1
 fi
 echo "  ✓ Host: $(hostname) | User: $(whoami)"
-echo "  ✓ BeeGFS: ${BEEGFS}"
 echo "  ✓ glibc: $(ldd --version 2>&1 | head -1)"
 echo ""
 
 # ─── Step 2: Check/clone repo ────────────────────────────────────────────────
-echo "[2/6] Project repository..."
+echo "[2/7] Project repository..."
 if [[ -d "${PROJECT}" ]]; then
-    echo "  ✓ Repo exists. Pulling latest..."
     cd "${PROJECT}" && git pull 2>/dev/null || echo "  ⚠ git pull failed"
+    echo "  ✓ Project: ${PROJECT}"
 else
-    echo "  → Cloning..."
     cd "${BEEGFS}"
     git clone https://github.com/saifi-shahrukh/rlt_ur5e.git
+    echo "  ✓ Cloned: ${PROJECT}"
 fi
-echo "  ✓ Project: ${PROJECT}"
 echo ""
 
-# ─── Step 3: Install UV ──────────────────────────────────────────────────────
-echo "[3/6] UV package manager..."
-export PATH="${HOME}/.local/bin:${HOME}/.cargo/bin:${PATH}"
-if command -v uv &> /dev/null; then
-    echo "  ✓ Already installed: $(uv --version)"
+# ─── Step 3: Install micromamba ──────────────────────────────────────────────
+echo "[3/7] Micromamba (conda replacement)..."
+if [[ -f "${MICROMAMBA}" ]]; then
+    echo "  ✓ Already installed: $(${MICROMAMBA} --version)"
 else
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    export PATH="${HOME}/.local/bin:${HOME}/.cargo/bin:${PATH}"
-    echo "  ✓ Installed: $(uv --version)"
-fi
-# Ensure in bashrc
-if ! grep -q '.local/bin' ~/.bashrc 2>/dev/null; then
-    echo 'export PATH="${HOME}/.local/bin:${HOME}/.cargo/bin:${PATH}"' >> ~/.bashrc
+    echo "  → Installing micromamba..."
+    mkdir -p "${HOME}/.local/bin"
+    curl -Ls https://micro.mamba.pm/api/micromamba/linux-64/latest | tar -xvj -C "${HOME}/.local/bin" --strip-components=1 bin/micromamba
+    chmod +x "${MICROMAMBA}"
+    echo "  ✓ Installed: $(${MICROMAMBA} --version)"
 fi
 echo ""
 
-# ─── Step 4: Install Python 3.11 via uv ─────────────────────────────────────
-echo "[4/6] Python & Virtual environment..."
-if ! command -v python3.11 &> /dev/null; then
-    echo "  → Installing Python 3.11 via uv..."
-    uv python install 3.11
-    echo "  ✓ Python 3.11 installed"
+# ─── Step 4: Create conda environment ───────────────────────────────────────
+echo "[4/7] Conda environment (Python 3.11 + CUDA)..."
+if [[ -f "${VENV}/bin/python" ]]; then
+    echo "  ✓ Environment exists at ${VENV}"
+    echo "  ✓ Python: $(${VENV}/bin/python --version)"
 else
-    echo "  ✓ Python 3.11 found: $(python3.11 --version)"
+    echo "  → Creating conda env at ${VENV}..."
+    echo "  (This takes 3-5 minutes — downloading Python + CUDA toolkit)"
+    echo ""
+    ${MICROMAMBA} create -p "${VENV}" \
+        python=3.11 \
+        pip \
+        cuda-toolkit=12.4 \
+        -c conda-forge -c nvidia \
+        -y
+    echo ""
+    echo "  ✓ Conda env created with Python 3.11 + CUDA 12.4"
 fi
 echo ""
 
-# Check glibc version to decide install strategy
-GLIBC_VER=$(ldd --version 2>&1 | head -1 | grep -oP '\d+\.\d+$' || echo "2.17")
-echo "  System glibc: ${GLIBC_VER}"
+# ─── Step 5: Install OpenPI ──────────────────────────────────────────────────
+echo "[5/7] Installing OpenPI..."
+# Activate
+export PATH="${VENV}/bin:${PATH}"
+export CONDA_PREFIX="${VENV}"
 
-if [[ -d "${OPENPI}/.venv" && -f "${OPENPI}/.venv/bin/python" ]]; then
-    echo "  ✓ Venv already exists at ${OPENPI}/.venv"
-    echo "  ✓ Python: $(${OPENPI}/.venv/bin/python --version 2>/dev/null || echo 'unknown')"
+# Check if openpi already installed
+if python -c "import openpi" 2>/dev/null; then
+    echo "  ✓ OpenPI already installed"
 else
-    # glibc 2.17 (CentOS 7) can't install torch 2.7.1 directly
-    # Need to install on a compute node or use conda
+    echo "  → Installing openpi and dependencies..."
+    echo "  (This takes 5-10 minutes — PyTorch, JAX, etc.)"
     echo ""
-    echo "  ⚠ glibc ${GLIBC_VER} detected (CentOS 7 headnode)"
-    echo "  PyTorch 2.7.1 requires glibc ≥ 2.28"
+    cd "${OPENPI}"
+    
+    # Install with pip (conda provides the glibc compatibility layer)
+    pip install --no-cache-dir -e . 2>&1 | tail -5
+    
     echo ""
-    echo "  Two options:"
-    echo "  A) Install on a compute node (recommended if nodes have newer OS)"
-    echo "  B) Install via conda/micromamba (works regardless)"
-    echo ""
-    echo "  Trying Option A: submitting install job to compute node..."
-    echo ""
-
-    # Create install script that runs on compute node
-    cat > /tmp/hpc_install_venv.sh << 'INSTALL_EOF'
-#!/bin/bash
-set -e
-export PATH="${HOME}/.local/bin:${HOME}/.cargo/bin:${PATH}"
-OPENPI="/data/beegfs/home/saifi/rlt_ur5e/openpi_ur5e/openpi-ur5e"
-cd "${OPENPI}"
-
-echo "Installing on node: $(hostname)"
-echo "glibc: $(ldd --version 2>&1 | head -1)"
-echo ""
-
-# Create venv
-uv venv .venv --python 3.11
-source .venv/bin/activate
-
-# Install openpi
-echo "Installing openpi (this takes 5-10 minutes)..."
-uv pip install -e .
-
-# Verify
-python -c "import torch; print(f'PyTorch {torch.__version__} | CUDA: {torch.cuda.is_available()}')"
-python -c "import jax; print(f'JAX {jax.__version__} | Devices: {jax.devices()}')"
-
-echo ""
-echo "✓ Installation complete!"
-INSTALL_EOF
-    chmod +x /tmp/hpc_install_venv.sh
-
-    echo "  Submitting install job (will run on a GPU node)..."
-    echo "  This takes ~5-10 minutes. Check with: squeue -u saifi"
-    echo ""
-
-    # Submit as interactive or batch
-    if [[ "${1}" == "--interactive" ]]; then
-        echo "  Running interactively on compute node..."
-        srun --partition=gpu --gres=gpu:1 --cpus-per-task=8 --mem=32G --time=00:30:00 \
-            bash /tmp/hpc_install_venv.sh
-    else
-        # Submit as batch job
-        sbatch --job-name=setup_venv \
-            --partition=gpu --gres=gpu:1 --cpus-per-task=8 --mem=32G --time=00:30:00 \
-            --output=${LOG_DIR}/setup_venv_%j.out --error=${LOG_DIR}/setup_venv_%j.err \
-            /tmp/hpc_install_venv.sh
-        echo "  ✓ Install job submitted! Monitor with:"
-        echo "    squeue -u saifi"
-        echo "    tail -f ${LOG_DIR}/setup_venv_*.out"
-        echo ""
-        echo "  Once it finishes, re-run this script to complete setup."
-        echo "  Or run: bash 01_setup.sh --check"
-    fi
+    echo "  → Verifying installation..."
+    python -c "import torch; print(f'  ✓ PyTorch {torch.__version__}')" || echo "  ⚠ PyTorch import failed"
+    python -c "import jax; print(f'  ✓ JAX {jax.__version__}')" || echo "  ⚠ JAX import failed"
+    echo "  ✓ OpenPI installed"
 fi
 echo ""
 
-# ─── Step 5: Setup directories & symlinks ────────────────────────────────────
-echo "[5/6] Dataset paths & symlinks..."
+# ─── Step 6: Setup directories & symlinks ────────────────────────────────────
+echo "[6/7] Dataset paths & symlinks..."
 mkdir -p "${DATASET_DIR}"
 mkdir -p "${LOG_DIR}"
 mkdir -p "$(dirname ${HF_SYMLINK})"
@@ -159,45 +118,58 @@ if [[ -L "${HF_SYMLINK}" ]]; then
     echo "  ✓ Symlink exists"
 else
     ln -sf "${DATASET_DIR}" "${HF_SYMLINK}"
-    echo "  ✓ Created: ${HF_SYMLINK} → ${DATASET_DIR}"
+    echo "  ✓ Created: ${HF_SYMLINK}"
 fi
 echo ""
 
-# ─── Step 6: W&B setup ───────────────────────────────────────────────────────
-echo "[6/6] Weights & Biases..."
+# ─── Step 7: W&B setup ───────────────────────────────────────────────────────
+echo "[7/7] Weights & Biases (live training curves)..."
 if [[ -f "${HOME}/.netrc" ]] && grep -q "api.wandb.ai" "${HOME}/.netrc" 2>/dev/null; then
-    echo "  ✓ W&B already configured"
+    echo "  ✓ W&B configured — training visible at wandb.ai"
 else
-    echo "  → W&B not yet configured."
+    echo "  → Setting up W&B..."
+    echo "    Get your API key at: https://wandb.ai/authorize"
     echo ""
-    echo "  After venv is installed, run:"
-    echo "    source ${OPENPI}/.venv/bin/activate"
-    echo "    wandb login"
-    echo "  Get key at: https://wandb.ai/authorize"
+    if [[ -t 0 ]]; then
+        # Interactive — try login now
+        export PATH="${VENV}/bin:${PATH}"
+        python -m wandb login 2>/dev/null || {
+            echo "  Manual login needed. Run later:"
+            echo "    export PATH=${VENV}/bin:\$PATH"
+            echo "    wandb login"
+        }
+    else
+        echo "  Run after setup: wandb login"
+    fi
 fi
 
-# Add WANDB_PROJECT to bashrc
+# Ensure WANDB_PROJECT in bashrc
 if ! grep -q 'WANDB_PROJECT' ~/.bashrc 2>/dev/null; then
     echo 'export WANDB_PROJECT="rlt-ur5e"' >> ~/.bashrc
 fi
 echo ""
 
 # ─── Summary ─────────────────────────────────────────────────────────────────
+echo "═══════════════════════════════════════════════════════���═══════"
+echo "  ✓ SETUP COMPLETE"
 echo "═══════════════════════════════════════════════════════════════"
-if [[ -f "${OPENPI}/.venv/bin/python" ]]; then
-    echo "  ✓ SETUP COMPLETE — Ready to train!"
-    echo "═══════════════════════════════════════════════════════════════"
+echo ""
+echo "  Env:       ${VENV}"
+echo "  Python:    $(${VENV}/bin/python --version 2>/dev/null || echo 'pending')"
+echo "  Project:   ${PROJECT}"
+echo "  Dataset:   ${DATASET_DIR}"
+echo "  Logs:      ${LOG_DIR}"
+echo ""
+
+if [[ -z "$(ls -A ${DATASET_DIR} 2>/dev/null)" ]]; then
+    echo "  ⚠ Dataset EMPTY — transfer from local:"
+    echo "    bash 02_transfer_dataset.sh (from LOCAL machine)"
     echo ""
-    echo "  Next steps:"
-    echo "    1. Transfer dataset: bash 02_transfer_dataset.sh (from LOCAL)"
-    echo "    2. W&B login:        source ${OPENPI}/.venv/bin/activate && wandb login"
-    echo "    3. Train:            bash 03_train.sh both"
-else
-    echo "  ⏳ SETUP IN PROGRESS"
-    echo "═══════════════════════════════════════════════════════════════"
-    echo ""
-    echo "  Venv install is running on a compute node."
-    echo "  Monitor: squeue -u saifi"
-    echo "  When done: bash 01_setup.sh --check"
 fi
+
+echo "  Next steps:"
+echo "    1. Transfer dataset (LOCAL):  bash 02_transfer_dataset.sh"
+echo "    2. Train (HPC):               cd hpc && bash 03_train.sh both"
+echo "    3. Monitor:                    bash 04_status.sh"
+echo "    4. Watch live:                 https://wandb.ai → project 'rlt-ur5e'"
 echo ""

@@ -2,7 +2,7 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 # SLURM: Train π0 LoRA (9 demos peg insertion)
 # Config: pi0_ur5e_peg_insertion_lora | batch_size=16 | 30k steps | ~2h
-# Norm stats: already in repo ✓
+# Norm stats: pre-computed in repo ✓
 # ═══════════════════════════════════════════════════════════════════════════════
 #SBATCH --job-name=pi0_peg
 #SBATCH --partition=gpu
@@ -18,10 +18,13 @@ set -e
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 OPENPI="/data/beegfs/home/saifi/rlt_ur5e/openpi_ur5e/openpi-ur5e"
+VENV="${OPENPI}/.venv"
 CONFIG="pi0_ur5e_peg_insertion_lora"
 EXP_NAME="peg_insertion_9demos"
 
 # ─── Environment ─────────────────────────────────────────────────────────────
+export PATH="${VENV}/bin:${HOME}/.local/bin:${PATH}"
+export CONDA_PREFIX="${VENV}"
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.90
 export XLA_PYTHON_CLIENT_PREALLOCATE=true
 export HF_HOME="/data/beegfs/home/saifi/.cache/huggingface"
@@ -30,11 +33,9 @@ export HF_HOME="/data/beegfs/home/saifi/.cache/huggingface"
 export WANDB_PROJECT="rlt-ur5e"
 export WANDB_RUN_GROUP="hpc-pi0"
 export WANDB_NAME="pi0_peg_9demos_$(date +%m%d_%H%M)"
-# WANDB_API_KEY should be set via `wandb login` or exported in env
 
 # ─── Run ─────────────────────────────────────────────────────────────────────
 cd "${OPENPI}"
-source .venv/bin/activate
 
 echo "═══════════════════════════════════════════════════════════════"
 echo "  Training π0 LoRA"
