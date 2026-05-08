@@ -33,6 +33,8 @@ export HF_HOME="/data/beegfs/home/saifi/.cache/huggingface"
 export WANDB_PROJECT="rlt-ur5e"
 export WANDB_RUN_GROUP="hpc-pi0"
 export WANDB_NAME="pi0_peg_9demos_$(date +%m%d_%H%M)"
+# API key set via ~/.bashrc or uncomment below:
+# export WANDB_API_KEY="your-key-here"
 
 # ─── Run ─────────────────────────────────────────────────────────────────────
 cd "${OPENPI}"
