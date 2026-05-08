@@ -19,11 +19,12 @@ echo "  Installing ALL missing dependencies..."
 echo "══════════════════════════════════════════════════════════════"
 
 # lerobot deps (it needs these - we installed lerobot with --no-deps)
+# NOTE: av needs ffmpeg libs - pin to version with manylinux wheel
 ${UV} pip install --python "${VENV}/bin/python" \
     "accelerate" \
     "diffusers" \
     "gymnasium" \
-    "av" \
+    "av==12.3.0" \
     "deepdiff" \
     "termcolor" \
     "packaging"
