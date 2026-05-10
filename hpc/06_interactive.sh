@@ -16,7 +16,7 @@ echo "════════════════════════�
 echo ""
 echo "  Once inside:"
 echo "    cd /data/beegfs/home/saifi/rlt_ur5e/openpi_ur5e/openpi-ur5e"
-echo "    source .venv/bin/activate"
+echo "    source .venv/activate_hpc.sh"
 echo "    nvidia-smi"
 echo "    python -c \"import jax; print(jax.devices())\""
 echo ""

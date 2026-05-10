@@ -64,7 +64,7 @@ if [[ -f "${HOME}/.netrc" ]] && grep -q "api.wandb.ai" "${HOME}/.netrc" 2>/dev/n
     echo "  ✓ W&B configured — check https://wandb.ai for live plots"
 else
     echo "  ⚠ W&B not configured (logging offline)"
-    echo "    To enable: source .venv/bin/activate && wandb login"
+    echo "    To enable: source .venv/activate_hpc.sh && wandb login"
 fi
 echo "└──────────────────────────────────────────────────────────────┘"
 echo ""

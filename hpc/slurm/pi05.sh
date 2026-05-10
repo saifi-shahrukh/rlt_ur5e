@@ -1,8 +1,7 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════════════════
 # SLURM: Train π0.5 LoRA (9 demos peg insertion)
-# Config: pi05_ur5e_peg_insertion_lora | batch_size=16 | 30k steps | ~3h
-# π0.5 = improved architecture with cross-attention VLM ↔ action expert
+# Config: pi05_ur5e_peg_insertion_lora | batch_size=16 | 30k steps
 # Norm stats: pre-computed in repo ✓
 # ═══════════════════════════════════════════════════════════════════════════════
 #SBATCH --job-name=pi05_peg
@@ -17,21 +16,16 @@
 
 set -e
 
-# ─── Config ─────────────────────────���────────────────────────────────────────
+# ─── Config ──────────────────────────────────────────────────────────────────
 OPENPI="/data/beegfs/home/saifi/rlt_ur5e/openpi_ur5e/openpi-ur5e"
 VENV="${OPENPI}/.venv"
 CONFIG="pi05_ur5e_peg_insertion_lora"
 EXP_NAME="peg_insertion_9demos"
 
-# ─── Environment ─────────────────────────────────────────────────────────────
-export PATH="${VENV}/bin:${HOME}/.local/bin:${PATH}"
-export CONDA_PREFIX="${VENV}"
-export XLA_PYTHON_CLIENT_MEM_FRACTION=0.90
-export XLA_PYTHON_CLIENT_PREALLOCATE=true
-export HF_HOME="/data/beegfs/home/saifi/.cache/huggingface"
+# ─── Environment (uses sysroot glibc 2.28) ───────────────────────────────────
+source "${VENV}/activate_hpc.sh"
 
 # ─── W&B Online Logging ──────────────────────────────────────────────────────
-export WANDB_PROJECT="rlt-ur5e"
 export WANDB_RUN_GROUP="hpc-pi05"
 export WANDB_NAME="pi05_peg_9demos_$(date +%m%d_%H%M)"
 # API key set via ~/.bashrc or uncomment below:
@@ -47,6 +41,7 @@ echo "  Exp:      ${EXP_NAME}"
 echo "  Node:     $(hostname)"
 echo "  GPU:      $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -1)"
 echo "  Python:   $(python --version)"
+echo "  glibc:    $(python -c \"import ctypes; libc=ctypes.CDLL('libc.so.6'); f=libc.gnu_get_libc_version; f.restype=ctypes.c_char_p; print(f().decode())\" 2>/dev/null || echo 'unknown')"
 echo "  W&B:      project=${WANDB_PROJECT} | run=${WANDB_NAME}"
 echo "  Start:    $(date)"
 echo "═══════════════════════════════════════════════════════════════"

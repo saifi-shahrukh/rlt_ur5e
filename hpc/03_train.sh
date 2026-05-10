@@ -22,8 +22,13 @@ echo ""
 # ─── Pre-flight ──────────────────────────────────────────────────────────────
 mkdir -p "${LOG_DIR}"
 
-if [[ ! -f "${OPENPI}/.venv/bin/activate" ]]; then
-    echo "ERROR: Venv not found! Run: bash 01_setup.sh"
+if [[ ! -f "${OPENPI}/.venv/bin/python" ]]; then
+    echo "ERROR: Venv not found! Run: bash setup_hpc_env.sh"
+    exit 1
+fi
+
+if [[ ! -f "${OPENPI}/.venv/activate_hpc.sh" ]]; then
+    echo "ERROR: activate_hpc.sh not found! Run: bash setup_hpc_env.sh"
     exit 1
 fi
 
@@ -41,7 +46,7 @@ elif [[ -n "${WANDB_API_KEY}" ]]; then
     echo "  ✓ W&B: API key found in env"
 else
     echo "  ⚠ W&B: not configured! Training will log offline."
-    echo "    Fix: source ${OPENPI}/.venv/bin/activate && wandb login"
+    echo "    Fix: source ${OPENPI}/.venv/activate_hpc.sh && wandb login"
     echo ""
 fi
 echo ""

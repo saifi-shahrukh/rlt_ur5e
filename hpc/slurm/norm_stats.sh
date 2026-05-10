@@ -16,10 +16,11 @@
 set -e
 
 OPENPI="/data/beegfs/home/saifi/rlt_ur5e/openpi_ur5e/openpi-ur5e"
+VENV="${OPENPI}/.venv"
 cd "${OPENPI}"
-source .venv/bin/activate
 
-export HF_HOME="/data/beegfs/home/saifi/.cache/huggingface"
+# ─── Environment (uses sysroot glibc 2.28) ───────────────────────────────────
+source "${VENV}/activate_hpc.sh"
 
 echo "═══════════════════════════════════════════════════════════════"
 echo "  Computing Normalization Stats"
