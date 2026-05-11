@@ -59,7 +59,7 @@ echo "  Config:   ${CONFIG}"
 echo "  Exp:      ${EXP_NAME}"
 echo "  Node:     $(hostname)"
 echo "  GPU:      $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -1)"
-echo "  Batch:    4 | GradAccum: 4 | Workers: 4 | Steps: 30k"
+echo "  Batch:    8 | GradAccum: 2 | Workers: 4 | Steps: 30k"
 echo "  Start:    $(date)"
 echo "═══════════════════════════════════════════════════════════════"
 nvidia-smi
@@ -75,8 +75,8 @@ ${SYSROOT}/lib64/ld-linux-x86-64.so.2 \
     ${VENV}/bin/python3.11 scripts/train.py ${CONFIG} \
     --exp-name=${EXP_NAME} \
     --overwrite \
-    --batch-size=4 \
-    --grad-accumulation-steps=4 \
+    --batch-size=8 \
+    --grad-accumulation-steps=2 \
     --num-workers=4
 
 echo ""
