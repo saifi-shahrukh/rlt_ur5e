@@ -410,13 +410,14 @@ import os
 print("  Package Versions:")
 print("  " + "─" * 50)
 
+# Note: Some packages (orbax, tensorstore) may segfault on headnodes
+# without GPUs. This is normal — they work fine on compute nodes.
 packages = [
     ("torch",          lambda: __import__("torch").__version__),
     ("jax",            lambda: __import__("jax").__version__),
     ("jaxlib",         lambda: __import__("jaxlib").__version__),
     ("flax",           lambda: __import__("flax").__version__),
     ("numpy",          lambda: __import__("numpy").__version__),
-    ("orbax",          lambda: __import__("orbax.checkpoint").__version__),
     ("optax",          lambda: __import__("optax").__version__),
     ("wandb",          lambda: __import__("wandb").__version__),
     ("transformers",   lambda: __import__("transformers").__version__),
@@ -424,6 +425,7 @@ packages = [
     ("sentencepiece",  lambda: __import__("sentencepiece").__version__),
     ("polars",         lambda: __import__("polars").__version__),
 ]
+# Skip orbax on headnode (segfaults without GPU due to tensorstore CUDA init)
 
 all_ok = True
 for name, get_ver in packages:
