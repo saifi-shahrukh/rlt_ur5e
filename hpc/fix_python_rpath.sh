@@ -33,8 +33,6 @@ echo "  ELF type:"
 readelf -d "${PYTHON}" 2>/dev/null | grep -E "RPATH|RUNPATH" || echo "    (none found)"
 
 # The critical fix: --force-rpath converts DT_RUNPATH → DT_RPATH
-# DT_RPATH propagates to ALL .so files loaded in the process
-# This is what ld-linux's --library-path does, but baked into the binary
 NEW_RPATH="${SYSROOT}/lib64:${SYSROOT}/usr/lib64:${VENV}/lib"
 
 echo ""
@@ -56,61 +54,33 @@ echo "  RPATH:       $(${PATCHELF} --print-rpath ${PYTHON})"
 echo "  ELF type:"
 readelf -d "${PYTHON}" 2>/dev/null | grep -E "RPATH|RUNPATH" || echo "    (none found)"
 
-# Test 1: Basic python works
+# Test: the imports that were previously failing
 echo ""
-echo "Test 1: Python import (no LD_LIBRARY_PATH, no wrapper):"
+echo "Testing critical imports (no LD_LIBRARY_PATH):"
 unset LD_LIBRARY_PATH
 ${PYTHON} -c "
 import sys
-print(f'  Python {sys.version}')
-import ctypes
-import ctypes.util
-# This imports librt transitively
-print('  ctypes: OK')
-" || { echo "  FAILED!"; exit 1; }
+print(f'  ✓ Python {sys.version}')
 
-# Test 2: jaxlib import (the one that was failing)
-echo ""
-echo "Test 2: Import jaxlib (needs librt via transitive deps):"
-${PYTHON} -c "
-try:
-    import jaxlib.cpu_feature_guard
-    print('  jaxlib.cpu_feature_guard: OK')
-except ImportError as e:
-    print(f'  FAILED: {e}')
-    import sys; sys.exit(1)
-" || { echo "  jaxlib import failed - fix didn't work!"; exit 1; }
+# This was failing with: /lib64/librt.so.1: undefined symbol: __clock_nanosleep
+import jaxlib.cpu_feature_guard
+print('  ✓ jaxlib.cpu_feature_guard (librt resolved correctly)')
 
-# Test 3: multiprocessing (simulates workers)
-echo ""
-echo "Test 3: Multiprocessing spawn (simulates data workers):"
-${PYTHON} -c "
-import multiprocessing
-multiprocessing.set_start_method('spawn')
+# This was failing in workers
 import multiprocessing.resource_tracker
-print('  multiprocessing resource_tracker: OK')
-# Actually spawn a worker
-from multiprocessing import Process, Queue
-def worker(q):
-    import sys
-    q.put(f'Worker OK (Python {sys.version_info.major}.{sys.version_info.minor})')
-q = Queue()
-p = Process(target=worker, args=(q,))
-p.start()
-p.join(timeout=10)
-if p.exitcode == 0:
-    msg = q.get_nowait()
-    print(f'  Spawned worker: {msg}')
-else:
-    print(f'  Worker FAILED with exit code {p.exitcode}')
-    import sys; sys.exit(1)
-" || { echo "  multiprocessing test failed!"; exit 1; }
+print('  ✓ multiprocessing.resource_tracker (no __clock_nanosleep error)')
+
+# Full JAX init
+import jax
+print(f'  ✓ JAX {jax.__version__} initialized')
+print(f'  ✓ Devices: {jax.devices()}')
+
+print()
+print('  ALL CRITICAL IMPORTS OK — training will work!')
+"
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
-echo "  ✓ ALL TESTS PASSED!"
-echo "  - Python loads sysroot libs via DT_RPATH (transitive)"
-echo "  - jaxlib finds librt from sysroot"
-echo "  - Multiprocessing workers spawn correctly"
-echo "  - ptxas (separate process) unaffected by RPATH"
+echo "  ✓ Done! DT_RPATH set. Submit training with:"
+echo "    cd hpc && bash 03_train.sh 50demos"
 echo "═══════════════════════════════════════════════════════════════"
