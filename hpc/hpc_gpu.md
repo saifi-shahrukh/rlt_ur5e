@@ -1,4 +1,4 @@
-# HPC GPU Cluster — Hardware Specification
+# HPC GPU Cluster — Hardware & Training Configuration
 
 ## Cluster Overview
 
@@ -27,64 +27,48 @@
 | **TDP** | 300W |
 | **NVLink** | 300 GB/s (within node, 6 links) |
 
-## Node Details
-
-| Node | Partition | GPUs | Notes |
-|------|-----------|------|-------|
-| hpc-gpu-01 | gpu-short | 4× V100 32GB | Short jobs only |
-| hpc-gpu-02 | gpu | 4× V100 32GB | Standard |
-| hpc-gpu-03 | gpu | 4× V100 32GB | Standard |
-| hpc-gpu-04 | gpu | 4× V100 32GB | Standard |
-| hpc-gpu-05 | gpu | 4× V100 32GB | Standard |
-| hpc-gpu-06 | gpu | 4× V100 32GB | Standard |
-| hpc-gpu-07 | gpu | 4× V100 32GB | Standard |
-| hpc-gpu-08 | gpu | 4× V100 32GB | Standard |
-
-## Per-Node Resources
-
-- **CPUs:** 56 total (28 physical cores × 2 HT)
-- **RAM:** 187 GB (171 GB usable after OS reservation)
-- **GPUs:** 4× V100 32GB with NVLink interconnect
-- **Optimal per-job allocation:** 1 GPU + 8-12 CPUs + 48-64 GB RAM
-- **Max concurrent jobs per node:** 3-4 (one per GPU)
-
 ## Memory Budget for π0 Training (per V100 32GB)
 
-| Component | pi0 | pi0.5 | pi0-FAST |
+| Component | π0 | π0.5 | π0-FAST |
 |-----------|-----|-------|----------|
 | Params (frozen) | 5.25 GiB | 5.47 GiB | ~5.2 GiB |
 | Params (trainable/LoRA) | 1.74 GiB | 1.74 GiB | ~1.7 GiB |
-| Optimizer state (Adam) | 3.49 GiB | 3.48 GiB | ~3.4 GiB |
-| **Subtotal (fixed)** | **10.48 GiB** | **10.69 GiB** | **~10.3 GiB** |
-| Available for activations | ~21.5 GiB | ~21.3 GiB | ~21.7 GiB |
-| Activations (batch=16) | ~14 GiB | ~19 GiB (!) | ~12 GiB |
-| Activations (batch=8) | ~8 GiB | ~11 GiB ✓ | ~7 GiB |
+| Optimizer state (Adam) | 3.49 GiB | 5.22 GiB | ~3.4 GiB |
+| **Subtotal (fixed)** | **10.48 GiB** | **12.43 GiB** | **~10.3 GiB** |
+| Available for activations | ~21.5 GiB | ~19.6 GiB | ~21.7 GiB |
+| Activations (batch=8) | ~8 GiB ✓ | ~11 GiB ✓ | ~7 GiB ✓ |
+| Activations (batch=4) | ~4 GiB ✓ | ~6 GiB ✓ | ~4 GiB ✓ |
 
-**Critical:** pi0.5 with batch=16 triggers XLA rematerialization (needs 18.86 GiB
-activations, exceeds safe margin). Use batch=8 + grad_accumulation=2 for pi0.5.
+**Critical:** π0.5 with batch≥8 triggers XLA rematerialization (21.77 GiB needed,
+only 16.82 GiB safe after overhead). Use batch=4 + grad_accum=2.
 
-## Expected Training Performance (properly configured)
+## Optimal Training Configuration (V100 32GB)
 
-| Model | Batch | s/step (expected) | 15k steps | 30k steps |
-|-------|-------|-------------------|-----------|----------|
-| pi0 | 16 | ~1.0-1.5s | 4-6 hrs | 8-12 hrs |
-| pi0.5 | 8+accum | ~2.5-3.5s | 10-14 hrs | 20-28 hrs |
-| pi0-FAST | 16 | ~0.5-0.8s | 2-3 hrs | 4-7 hrs |
+| Model | Batch | Grad Accum | Eff. Batch | Workers | Steps | Est. Time |
+|-------|-------|------------|------------|---------|-------|----------|
+| **π0** | 8 | 1 | 8 | 4 | 5000 | ~7-8 hrs |
+| **π0.5** | 4 | 2 | 8 | 4 | 5000 | ~10-11 hrs |
+| **π0-FAST** | 8 | 1 | 8 | 4 | 5000 | ~5-6 hrs |
 
-## Key Environment Constraint: CentOS 7 + glibc
+### Why 5000 steps?
+- LoRA fine-tuning converges quickly (only 14% params trainable)
+- 50 demos × 5000 steps ÷ 8 batch = 625 full passes through data
+- Official openpi uses 30k steps with 32 batch on 8× H100 → equivalent data seen
+- We process same #samples: 5000×8 = 40k vs 30k×32÷8GPUs = 120k (conservative)
 
-**Problem:** CentOS 7 ships glibc 2.17. Modern Python packages (JAX, PyTorch, etc.)
-require glibc ≥ 2.28. Solved via conda                        .
+## Environment Architecture
 
-**Architecture:**
--                                         — contains glibc 2.28 + ld-linux
-- Main Python process launched via:                                                      
-- This provides sysroot libs to the main process only (process-local)
-- ptxas/nvlink (CUDA compiler tools) need CLEAN system environment
+**Problem:** CentOS 7 has glibc 2.17. JAX/PyTorch need glibc ≥ 2.28.
 
-**Critical limitation for data workers:**
--                  is process-local (not inherited by child processes)
-- Python multiprocessing         creates NEW processes that don't inherit                 
-- Spawned workers fall back to system glibc 2.17 → crash on glibc 2.28 symbols
-- This is why                   was used as workaround (no child processes)
-- **Fix:** patchelf Python binary interpreter to sysroot ld-linux, OR set LD_LIBRARY_PATH + patchelf ptxas
+**Solution:** patchelf + sysroot (DT_RPATH):
+1.              binary has ELF interpreter → sysroot                       
+2.              binary has DT_RPATH →                                            
+3. DT_RPATH (unlike DT_RUNPATH) propagates **transitively** to all loaded       files
+4. This means jaxlib, torch, etc. all find sysroot glibc versions
+5. ptxas (spawned as separate process) is NOT affected by parent's RPATH
+
+**One-time setup:**                               
+
+## Quick Start
+
+``                                                                                                                                                                                                                                                                                                    ``

@@ -2,7 +2,8 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 # SLURM: Train π0-FAST LoRA (50 demos peg insertion)
 # Config: pi0_fast_ur5e_peg_insertion_lora | V100 32GB optimized
-# Expected: ~3-4 hours for 30k steps (FAST is lighter than π0)
+# Steps: 5000 (sufficient for LoRA on 50 demos)
+# REQUIRES: Run hpc/cache_fast_tokenizer.sh on headnode first!
 # ═══════════════════════════════════════════════════════════════════════════════
 #SBATCH --job-name=pi0fast_50
 #SBATCH --partition=gpu
@@ -16,7 +17,7 @@
 
 set -euo pipefail
 
-# ─── Config ──────────────────────────────────────────────────────────────────
+# ─── Config ────────────────���─────────────────────────────────────────────────
 OPENPI="/data/beegfs/home/saifi/rlt_ur5e/openpi_ur5e/openpi-ur5e"
 VENV="${OPENPI}/.venv"
 SYSROOT="${VENV}/x86_64-conda-linux-gnu/sysroot"
@@ -24,15 +25,17 @@ CONFIG="pi0_fast_ur5e_peg_insertion_lora"
 EXP_NAME="peg_insertion_50demos"
 
 # ─── Environment ─────────────────────────────────────────────────────────────
-export PATH="${VENV}/bin:${HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin:${PATH}"
+export PATH="${VENV}/bin:${HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin"
 export CONDA_PREFIX="${VENV}"
 
-# HuggingFace
+# HuggingFace — FAST tokenizer must be pre-cached!
 export HF_HOME="/data/beegfs/home/saifi/.cache/huggingface"
 export HF_TOKEN=$(cat /data/beegfs/home/saifi/.cache/huggingface/token 2>/dev/null || echo "")
 export HF_HUB_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 export HF_LEROBOT_HOME="/data/beegfs/home/saifi/.cache/huggingface/lerobot"
+# transformers offline mode (needed for AutoProcessor.from_pretrained)
+export TRANSFORMERS_OFFLINE=1
 
 # JAX/XLA — optimized for V100 32GB
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.95
@@ -53,26 +56,28 @@ fi
 cd "${OPENPI}"
 
 echo "═══════════════════════════════════════════════════════════════"
-echo "  Training π0-FAST LoRA — 50 demos | V100 32GB optimized"
+echo "  Training π0-FAST LoRA — 50 demos | V100 32GB"
 echo "  Config:   ${CONFIG}"
 echo "  Exp:      ${EXP_NAME}"
 echo "  Node:     $(hostname)"
 echo "  GPU:      $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -1)"
-echo "  Batch:    16 | Workers: 4 | Steps: 30k"
+echo "  Batch:    8 | Workers: 4 | Steps: 5000"
 echo "  Start:    $(date)"
 echo "═══════════════════════════════════════════════════════════════"
 nvidia-smi
 echo ""
 
 # ─── Launch Training ─────────────────────────────────────────────────────────
-# π0-FAST is lighter — batch=8 with grad_accumulation=2 (effective batch=16)
-# FAST uses discrete action tokens, much less memory than diffusion
-
-    ${VENV}/bin/python3.11 scripts/train.py ${CONFIG} \
+# π0-FAST: discrete action tokens (lighter than diffusion heads)
+# batch=8: safe memory, FAST has smaller activations
+# workers=4: parallel data loading
+${VENV}/bin/python3.11 scripts/train.py ${CONFIG} \
     --exp-name=${EXP_NAME} \
     --overwrite \
-    --batch-size=16 \
-    --num-workers=4
+    --batch-size=8 \
+    --num-workers=4 \
+    --num-train-steps=5000 \
+    --save-interval=1000
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════"

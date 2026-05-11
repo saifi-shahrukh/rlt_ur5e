@@ -2,7 +2,7 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 # SLURM: Train π0 LoRA (50 demos peg insertion)
 # Config: pi0_ur5e_peg_insertion_lora | V100 32GB optimized
-# Expected: ~4-5 hours for 30k steps
+# Steps: 5000 (sufficient for LoRA on 50 demos)
 # ═══════════════════════════════════════════════════════════════════════════════
 #SBATCH --job-name=pi0_50
 #SBATCH --partition=gpu
@@ -24,7 +24,7 @@ CONFIG="pi0_ur5e_peg_insertion_lora"
 EXP_NAME="peg_insertion_50demos"
 
 # ─── Environment ─────────────────────────────────────────────────────────────
-export PATH="${VENV}/bin:${HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin:${PATH}"
+export PATH="${VENV}/bin:${HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin"
 export CONDA_PREFIX="${VENV}"
 
 # HuggingFace
@@ -53,27 +53,29 @@ fi
 cd "${OPENPI}"
 
 echo "═══════════════════════════════════════════════════════════════"
-echo "  Training π0 LoRA — 50 demos | V100 32GB optimized"
+echo "  Training π0 LoRA — 50 demos | V100 32GB"
 echo "  Config:   ${CONFIG}"
 echo "  Exp:      ${EXP_NAME}"
 echo "  Node:     $(hostname)"
 echo "  GPU:      $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -1)"
-echo "  Batch:    16 | Workers: 4 | Steps: 30k"
+echo "  Batch:    8 | Workers: 4 | Steps: 5000"
 echo "  Start:    $(date)"
 echo "═══════════════════════════════════════════════════════════════"
 nvidia-smi
 echo ""
 
 # ─── Launch Training ─────────────────────────────────────────────────────────
-# Python has RPATH set to sysroot libs (via fix_python_rpath.sh).
-# Workers inherit the patchelf interpreter + RPATH -> no LD_LIBRARY_PATH needed.
-
-
-    ${VENV}/bin/python3.11 scripts/train.py ${CONFIG} \
+# batch=8: safe memory (~8 GiB activations), no rematerialization
+# workers=4: parallel data loading (DT_RPATH provides sysroot libs)
+# 5000 steps: sufficient for LoRA convergence on 50 demos
+# save_interval=1000: checkpoints at 1k, 2k, 3k, 4k, 5k
+${VENV}/bin/python3.11 scripts/train.py ${CONFIG} \
     --exp-name=${EXP_NAME} \
     --overwrite \
-    --batch-size=16 \
-    --num-workers=4
+    --batch-size=8 \
+    --num-workers=4 \
+    --num-train-steps=5000 \
+    --save-interval=1000
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
