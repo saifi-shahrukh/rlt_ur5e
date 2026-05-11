@@ -78,6 +78,21 @@ rm -rf /data/beegfs/home/saifi/.cache/huggingface/datasets/parquet/default-*/*.i
 # also load sysroot glibc 2.28 libs (fixes librt.so.1 __clock_nanosleep error).
 export LD_LIBRARY_PATH="${SYSROOT}/lib64:${SYSROOT}/usr/lib64:${VENV}/lib:${LD_LIBRARY_PATH:-}"
 
+# Create ptxas/nvlink wrappers so JAX/XLA can JIT-compile GPU kernels.
+# The real binaries (from nvidia-cuda-nvcc-cu12) need the sysroot loader.
+REAL_PTXAS="${VENV}/lib/python3.11/site-packages/nvidia/cuda_nvcc/bin/ptxas"
+if [[ -f "${REAL_PTXAS}" ]] && [[ ! -f "${VENV}/bin/ptxas" ]]; then
+    echo '#!/bin/bash' > "${VENV}/bin/ptxas"
+    echo "exec ${SYSROOT}/lib64/ld-linux-x86-64.so.2 --library-path ${SYSROOT}/lib64:${SYSROOT}/usr/lib64:${VENV}/lib ${REAL_PTXAS} \"\$@\"" >> "${VENV}/bin/ptxas"
+    chmod +x "${VENV}/bin/ptxas"
+fi
+REAL_NVLINK="${VENV}/lib/python3.11/site-packages/nvidia/cuda_nvcc/bin/nvlink"
+if [[ -f "${REAL_NVLINK}" ]] && [[ ! -f "${VENV}/bin/nvlink" ]]; then
+    echo '#!/bin/bash' > "${VENV}/bin/nvlink"
+    echo "exec ${SYSROOT}/lib64/ld-linux-x86-64.so.2 --library-path ${SYSROOT}/lib64:${SYSROOT}/usr/lib64:${VENV}/lib ${REAL_NVLINK} \"\$@\"" >> "${VENV}/bin/nvlink"
+    chmod +x "${VENV}/bin/nvlink"
+fi
+
 # Launch through sysroot's ld-linux (main process uses --library-path,
 # spawned workers inherit LD_LIBRARY_PATH — both get glibc 2.28)
 ${SYSROOT}/lib64/ld-linux-x86-64.so.2 \
