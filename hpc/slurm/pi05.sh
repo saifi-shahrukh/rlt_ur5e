@@ -36,7 +36,7 @@ export HF_LEROBOT_HOME="/data/beegfs/home/saifi/.cache/huggingface/lerobot"
 # JAX/XLA
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.90
 export XLA_PYTHON_CLIENT_PREALLOCATE=true
-export XLA_FLAGS="--xla_gpu_unsafe_fallback_to_driver_on_ptxas_not_found"
+export XLA_FLAGS="--xla_gpu_unsafe_fallback_to_driver_on_ptxas_not_found=true"
 
 # W&B (train.py uses project="openpi" hardcoded)
 # W&B: read API key from netrc (multi-line format) or fallback to env
@@ -72,25 +72,51 @@ echo ""
 # Clean any broken dataset cache from previous failed runs
 rm -rf /data/beegfs/home/saifi/.cache/huggingface/datasets/parquet/default-*/*.incomplete 2>/dev/null || true
 
-# Create ptxas/nvlink wrappers BEFORE setting LD_LIBRARY_PATH
-# (chmod needs system glibc, not sysroot — must run before LD_LIBRARY_PATH is set)
-REAL_PTXAS="${VENV}/lib/python3.11/site-packages/nvidia/cuda_nvcc/bin/ptxas"
-if [[ -f "${REAL_PTXAS}" ]]; then
+# Patchelf ptxas/nvlink to use sysroot ld-linux (same approach as Python).
+# When LD_LIBRARY_PATH has sysroot libs, system binaries crash because
+# system ld-linux 2.17 can't load sysroot libc 2.28. Patchelf makes them
+# use sysroot ld-linux 2.28 directly, so they work with any LD_LIBRARY_PATH.
+PATCHELF="${VENV}/bin/patchelf"
+if [[ -f "${VENV}/bin/ptxas.real" ]]; then
+    # Only patchelf once (check if interpreter is already sysroot)
+    CURRENT_INTERP=$(${PATCHELF} --print-interpreter "${VENV}/bin/ptxas.real" 2>/dev/null || echo "")
+    if [[ "${CURRENT_INTERP}" != *"sysroot"* ]]; then
+        ${PATCHELF} --set-interpreter "${SYSROOT}/lib64/ld-linux-x86-64.so.2" \
+                   --set-rpath "${SYSROOT}/lib64:${SYSROOT}/usr/lib64" \
+                   "${VENV}/bin/ptxas.real"
+    fi
     rm -f "${VENV}/bin/ptxas"
-    printf '#!/bin/bash\nexec %s --library-path %s %s "$@"\n' \
-        "${SYSROOT}/lib64/ld-linux-x86-64.so.2" \
-        "${SYSROOT}/lib64:${SYSROOT}/usr/lib64:${VENV}/lib" \
-        "${REAL_PTXAS}" > "${VENV}/bin/ptxas"
-    chmod +x "${VENV}/bin/ptxas"
+    ln -sf ptxas.real "${VENV}/bin/ptxas"
+    echo "ptxas: $(${VENV}/bin/ptxas --version 2>&1 | grep release || echo 'FAILED')"
 fi
-REAL_NVLINK="${VENV}/lib/python3.11/site-packages/nvidia/cuda_nvcc/bin/nvlink"
-if [[ -f "${REAL_NVLINK}" ]]; then
+if [[ -f "${VENV}/bin/nvlink.real" ]]; then
+    CURRENT_INTERP=$(${PATCHELF} --print-interpreter "${VENV}/bin/nvlink.real" 2>/dev/null || echo "")
+    if [[ "${CURRENT_INTERP}" != *"sysroot"* ]]; then
+        ${PATCHELF} --set-interpreter "${SYSROOT}/lib64/ld-linux-x86-64.so.2" \
+                   --set-rpath "${SYSROOT}/lib64:${SYSROOT}/usr/lib64" \
+                   "${VENV}/bin/nvlink.real"
+    fi
     rm -f "${VENV}/bin/nvlink"
-    printf '#!/bin/bash\nexec %s --library-path %s %s "$@"\n' \
-        "${SYSROOT}/lib64/ld-linux-x86-64.so.2" \
-        "${SYSROOT}/lib64:${SYSROOT}/usr/lib64:${VENV}/lib" \
-        "${REAL_NVLINK}" > "${VENV}/bin/nvlink"
-    chmod +x "${VENV}/bin/nvlink"
+    ln -sf nvlink.real "${VENV}/bin/nvlink"
+    echo "nvlink: $(${VENV}/bin/nvlink --version 2>&1 | grep release || echo 'FAILED')"
+fi
+# Also patchelf pip-installed ptxas/nvlink (XLA checks these paths too)
+PIP_CUDA="${VENV}/lib/python3.11/site-packages/nvidia/cuda_nvcc/bin"
+if [[ -f "${PIP_CUDA}/ptxas" ]] && [[ ! -L "${PIP_CUDA}/ptxas" ]]; then
+    CURRENT_INTERP=$(${PATCHELF} --print-interpreter "${PIP_CUDA}/ptxas" 2>/dev/null || echo "")
+    if [[ "${CURRENT_INTERP}" != *"sysroot"* ]]; then
+        ${PATCHELF} --set-interpreter "${SYSROOT}/lib64/ld-linux-x86-64.so.2" \
+                   --set-rpath "${SYSROOT}/lib64:${SYSROOT}/usr/lib64" \
+                   "${PIP_CUDA}/ptxas"
+    fi
+fi
+if [[ -f "${PIP_CUDA}/nvlink" ]] && [[ ! -L "${PIP_CUDA}/nvlink" ]]; then
+    CURRENT_INTERP=$(${PATCHELF} --print-interpreter "${PIP_CUDA}/nvlink" 2>/dev/null || echo "")
+    if [[ "${CURRENT_INTERP}" != *"sysroot"* ]]; then
+        ${PATCHELF} --set-interpreter "${SYSROOT}/lib64/ld-linux-x86-64.so.2" \
+                   --set-rpath "${SYSROOT}/lib64:${SYSROOT}/usr/lib64" \
+                   "${PIP_CUDA}/nvlink"
+    fi
 fi
 
 # ─── Launch Training ─────────────────────────────────────────────────────────
