@@ -6,17 +6,22 @@
 #           Using --no-deps causes cascading missing-dependency catastrophes.
 #
 # Solution: Install conda's sysroot_linux-64=2.28 (provides glibc 2.28 runtime),
-#           then patchelf Python to USE that glibc. After patching, pip/uv sees
+#           then patchelf Python to USE that glibc. After patching, pip sees
 #           glibc 2.28 and installs ALL packages normally WITH their full deps.
 #
 # Why this works:
 #   1. conda's sysroot_linux-64=2.28 provides a REAL glibc 2.28 (libc.so.6,
 #      ld-linux-x86-64.so.2) inside the conda env
 #   2. patchelf changes Python's ELF interpreter to use sysroot's ld-linux
-#   3. Now Python (and pip/uv running inside it) detects glibc 2.28
-#   4. pip happily downloads manylinux_2_28 wheels (torch, jax, etc.)
-#   5. At runtime, all .so files load correctly via glibc 2.28
+#   3. patchelf sets RPATH so Python loads glibc 2.28 at startup
+#   4. pip detects glibc 2.28 → downloads manylinux_2_28 wheels normally
+#   5. At runtime, activate_hpc.sh sets LD_LIBRARY_PATH for .so files
 #   6. glibc 2.28 is backward-compatible with code built for glibc 2.17
+#
+# CRITICAL: Do NOT set LD_LIBRARY_PATH during installation!
+#   System binaries (uname, gcc, etc.) use the system's ld-linux (glibc 2.17)
+#   and will CRASH if they find glibc 2.28's libc.so.6 in LD_LIBRARY_PATH.
+#   LD_LIBRARY_PATH is ONLY set at runtime via activate_hpc.sh.
 #
 # Run ONCE on HPC headnode:
 #   cd /data/beegfs/home/saifi/rlt_ur5e/hpc && bash setup_hpc_env.sh
@@ -35,6 +40,9 @@ DATASET_DIR="${BEEGFS}/datasets/saifi/ur5e-peg-insertion-dual"
 HF_SYMLINK="${HOME}/.cache/huggingface/lerobot/saifi/ur5e-peg-insertion-dual"
 
 export PATH="${HOME}/.local/bin:${PATH}"
+
+# CRITICAL: Ensure LD_LIBRARY_PATH does NOT contain sysroot paths during install
+unset LD_LIBRARY_PATH 2>/dev/null || true
 
 echo "═════════════════════════════════════════════════════════════════"
 echo "  HPC Setup — OpenPI π0/π0.5 Fine-tuning"
@@ -70,6 +78,7 @@ echo ""
 #   - sysroot_linux-64   : Provides glibc 2.28 runtime (libc.so.6, ld-linux)
 #   - patchelf           : Tool to modify ELF binaries' interpreter
 #   - libstdcxx-ng>=12   : Modern C++ runtime (needed by torch/jax .so files)
+#   - coreutils          : Provides uname, etc. linked to conda's libs
 #
 # We do NOT install CUDA here — PyTorch and JAX pip wheels bundle their own
 # CUDA runtime. The GPU DRIVER on cluster nodes is what matters (must be >=525).
@@ -81,14 +90,16 @@ if [[ -d "${VENV}" ]]; then
     rm -rf "${VENV}"
 fi
 
-echo "  → Installing Python 3.11 + sysroot (glibc 2.28) + patchelf..."
+echo "  → Installing Python 3.11 + sysroot (glibc 2.28) + patchelf + coreutils..."
 echo "    (This takes 2-5 minutes)"
 echo ""
 
 ${MICROMAMBA} create -p "${VENV}" \
     python=3.11 \
+    pip \
     sysroot_linux-64=2.28 \
     patchelf \
+    coreutils \
     "libstdcxx-ng>=12" \
     -c conda-forge \
     -y
@@ -104,12 +115,9 @@ echo ""
 # This is the CRITICAL step. We change Python's ELF interpreter from the
 # system's ld-linux (glibc 2.17) to conda sysroot's ld-linux (glibc 2.28).
 #
-# After this patch:
-#   - Python loads glibc 2.28 at startup
-#   - pip/uv detects glibc 2.28 → allows manylinux_2_28 wheel downloads
-#   - All .so files (torch, jax, etc.) find glibc 2.28 symbols at runtime
-#   - Backward compatible: Python itself (built for glibc 2.17) works fine
-#     on glibc 2.28 (newer glibc always supports older binaries)
+# We also set RPATH so Python finds glibc 2.28 libs WITHOUT LD_LIBRARY_PATH.
+# This is important because LD_LIBRARY_PATH would break system binaries
+# (uname, gcc, etc.) that pip spawns via subprocess.
 # ═════════════════════════════════════════════════════════════════
 echo "[3/6] Patching Python to use glibc 2.28..."
 
@@ -132,11 +140,11 @@ OLD_INTERP=$(${PATCHELF} --print-interpreter "${PYTHON}" 2>/dev/null || echo "un
 echo "  Current interpreter: ${OLD_INTERP}"
 echo "  New interpreter:     ${NEW_LD}"
 
-# Apply patch
+# Apply patch: change ELF interpreter
 ${PATCHELF} --set-interpreter "${NEW_LD}" "${PYTHON}"
 
-# Also set RPATH so Python finds sysroot's glibc at runtime
-# (The original RPATH for conda libs is preserved by prepending)
+# Set RPATH so Python finds sysroot's glibc WITHOUT needing LD_LIBRARY_PATH
+# This is what makes pip detect glibc 2.28 without breaking system binaries
 ORIG_RPATH=$(${PATCHELF} --print-rpath "${PYTHON}" 2>/dev/null || echo "")
 NEW_RPATH="${SYSROOT}/lib64:${SYSROOT}/usr/lib64:${VENV}/lib"
 if [[ -n "${ORIG_RPATH}" ]]; then
@@ -144,19 +152,18 @@ if [[ -n "${ORIG_RPATH}" ]]; then
 fi
 ${PATCHELF} --set-rpath "${NEW_RPATH}" "${PYTHON}"
 
-# Verify it works
+# Verify Python still works after patching
 if ! ${PYTHON} -c "print('Python works after patchelf')" 2>/dev/null; then
     echo "  ✘ ERROR: Python broken after patchelf!"
     echo "    Attempting recovery..."
     ${PATCHELF} --set-interpreter "${OLD_INTERP}" "${PYTHON}"
-    echo "    Reverted. This approach may not work on this cluster."
-    echo "    See FALLBACK section in the script comments."
+    echo "    Reverted. The sysroot approach failed on this system."
     exit 1
 fi
 
-# Verify glibc version detection
+# Verify glibc version detection (this is what pip uses to decide wheel compat)
 DETECTED_GLIBC=$(${PYTHON} -c "
-import ctypes, ctypes.util
+import ctypes
 try:
     libc = ctypes.CDLL('libc.so.6')
     gnu_get_libc_version = libc.gnu_get_libc_version
@@ -169,86 +176,82 @@ except Exception as e:
 echo "  ✓ Patched! Detected glibc: ${DETECTED_GLIBC}"
 
 if [[ "${DETECTED_GLIBC}" != 2.2* && "${DETECTED_GLIBC}" != 2.3* ]]; then
-    echo "  ⚠ WARNING: Expected glibc >= 2.28, got ${DETECTED_GLIBC}"
-    echo "    pip may still refuse manylinux_2_28 wheels."
-    echo "    Trying LD_LIBRARY_PATH workaround..."
-    export LD_LIBRARY_PATH="${SYSROOT}/lib64:${SYSROOT}/usr/lib64:${VENV}/lib:${LD_LIBRARY_PATH:-}"
-    DETECTED_GLIBC=$(${PYTHON} -c "
-import ctypes
-libc = ctypes.CDLL('libc.so.6')
-gnu_get_libc_version = libc.gnu_get_libc_version
-gnu_get_libc_version.restype = ctypes.c_char_p
-print(gnu_get_libc_version().decode())
-" 2>/dev/null || echo "error")
-    echo "  After LD_LIBRARY_PATH: glibc = ${DETECTED_GLIBC}"
+    echo "  ✘ ERROR: Expected glibc >= 2.28, got ${DETECTED_GLIBC}"
+    echo "    The patchelf + RPATH approach did not work."
+    echo "    Python's ctypes still loads the system glibc 2.17."
+    echo ""
+    echo "    Debug info:"
+    echo "    Interpreter: $(${PATCHELF} --print-interpreter ${PYTHON})"
+    echo "    RPATH: $(${PATCHELF} --print-rpath ${PYTHON})"
+    echo "    ldd output:"
+    ldd "${PYTHON}" 2>&1 | grep libc || true
+    exit 1
 fi
 echo ""
 
 # ═════════════════════════════════════════════════════════════════
-# STEP 4: Install OpenPI with ALL dependencies (the right way!)
+# STEP 4: Install OpenPI with ALL dependencies
 #
-# NOW that Python sees glibc 2.28, we can do a NORMAL pip install.
-# No --no-deps. No version hacks. No manual dependency management.
+# NOW that Python sees glibc 2.28 (via RPATH, NOT LD_LIBRARY_PATH),
+# pip will happily download manylinux_2_28 wheels.
 #
-# The pyproject.toml pins exact versions that the authors tested together.
-# pip resolves the full dependency tree correctly.
-#
-# The ONLY special handling:
-#   - ml-dtypes==0.4.1 (override from [tool.uv] section)
-#   - PyTorch from cu124 index (for CUDA 12.4 GPU support)
-#   - lerobot: if rerun-sdk fails (needs display), exclude it
+# IMPORTANT: We do NOT set LD_LIBRARY_PATH here!
+# System binaries (uname, gcc, etc.) spawned by pip would crash if
+# they found glibc 2.28's libc.so.6 in their library search path.
+# The RPATH on Python is sufficient for pip's glibc detection.
 # ═════════════════════════════════════════════════════════════════
 echo "[4/6] Installing OpenPI + all dependencies..."
 echo "  (This takes 10-20 minutes — downloading PyTorch ~2.5GB, JAX ~700MB, etc.)"
 echo ""
+echo "  NOTE: LD_LIBRARY_PATH is intentionally UNSET during installation."
+echo "  Python detects glibc 2.28 via RPATH. System binaries remain unaffected."
+echo ""
+
+# Ensure conda's bin is in PATH (provides coreutils like uname if needed)
+export PATH="${VENV}/bin:${PATH}"
 
 cd "${OPENPI}"
-
-# Ensure LD_LIBRARY_PATH is set for this session (and all pip subprocesses)
-export LD_LIBRARY_PATH="${SYSROOT}/lib64:${SYSROOT}/usr/lib64:${VENV}/lib:${LD_LIBRARY_PATH:-}"
 
 # Step 4a: Pre-install ml-dtypes at the pinned version (from [tool.uv] override)
 # This prevents version conflicts during resolution
 echo "  [4a] Pre-installing ml-dtypes==0.4.1 (version override)..."
-${VENV}/bin/pip install --no-cache-dir "ml-dtypes==0.4.1"
+${VENV}/bin/pip install --no-cache-dir "ml-dtypes==0.4.1" 2>&1 | tail -5
+echo ""
 
 # Step 4b: Install PyTorch with CUDA 12.4 from PyTorch's own index
 # (PyTorch wheels bundle their own CUDA runtime, so no system CUDA needed)
-echo ""
 echo "  [4b] Installing PyTorch 2.7.1 + CUDA 12.4..."
 ${VENV}/bin/pip install --no-cache-dir \
     "torch==2.7.1" \
-    --index-url https://download.pytorch.org/whl/cu124
+    --index-url https://download.pytorch.org/whl/cu124 \
+    2>&1 | tail -5
+echo ""
 
 # Step 4c: Install the full OpenPI project (editable) with ALL dependencies
 # This respects pyproject.toml's version pins and installs the complete dep tree
-echo ""
 echo "  [4c] Installing OpenPI (editable) with full dependency tree..."
 echo "       This installs: jax, flax, orbax, lerobot, transformers, wandb, etc."
 ${VENV}/bin/pip install --no-cache-dir \
     -e . \
     --extra-index-url https://download.pytorch.org/whl/cu124 \
-    2>&1 | tee /tmp/openpi_install.log
+    2>&1 | tee /tmp/openpi_install.log | tail -20
 
-INSTALL_STATUS=$?
+INSTALL_STATUS=${PIPESTATUS[0]:-$?}
 
 # Step 4d: Handle potential rerun-sdk failure
 # lerobot depends on rerun-sdk which needs X11/GL (not available on headless HPC).
 # If the full install failed due to rerun-sdk, do a targeted fix:
 if [[ ${INSTALL_STATUS} -ne 0 ]]; then
     echo ""
-    echo "  ⚠ Full install failed. Checking if it's rerun-sdk..."
-    if grep -qi "rerun\|rerun-sdk" /tmp/openpi_install.log; then
+    echo "  ⚠ Full install had issues. Checking if it's rerun-sdk..."
+    if grep -qi "rerun\|rerun-sdk\|rerun_sdk" /tmp/openpi_install.log; then
         echo "  → rerun-sdk failed (expected on headless HPC). Working around..."
         echo ""
-        
-        # Install everything EXCEPT lerobot first
-        ${VENV}/bin/pip install --no-cache-dir \
-            -e . \
-            --extra-index-url https://download.pytorch.org/whl/cu124 \
-            --no-deps
-        
-        # Install all deps from pyproject.toml except lerobot
+
+        # Install OpenPI as editable (no deps, just the package itself)
+        ${VENV}/bin/pip install --no-cache-dir -e . --no-deps 2>&1 | tail -3
+
+        # Install all deps from pyproject.toml EXCEPT lerobot
         ${VENV}/bin/pip install --no-cache-dir \
             "augmax>=0.3.4" "dm-tree>=0.1.8" "einops>=0.8.0" "equinox>=0.11.8" \
             "flatbuffers>=24.3.25" "flax==0.10.2" "fsspec[gcs]>=2024.6.0" \
@@ -259,29 +262,36 @@ if [[ ${INSTALL_STATUS} -ne 0 ]]; then
             "typing-extensions>=4.12.2" "tyro>=0.9.5" "wandb>=0.19.1" \
             "filelock>=3.16.1" "beartype==0.19.0" "treescope>=0.1.7" \
             "transformers==4.53.2" "rich>=14.0.0" "polars>=1.30.0" \
-            --extra-index-url https://download.pytorch.org/whl/cu124
-        
+            --extra-index-url https://download.pytorch.org/whl/cu124 \
+            2>&1 | tail -10
+
         # Install lerobot WITHOUT rerun-sdk
-        # First install lerobot's deps (everything except rerun-sdk)
-        ${VENV}/bin/pip install --no-cache-dir "lerobot>=0.4.0" --no-deps
+        ${VENV}/bin/pip install --no-cache-dir "lerobot>=0.4.0" --no-deps 2>&1 | tail -3
         # Then install lerobot's key runtime deps that we actually use
         ${VENV}/bin/pip install --no-cache-dir \
             "datasets>=2.19" "huggingface-hub>=0.23" "safetensors" \
             "draccus" "jsonlines" "pyarrow>=15.0" "torchvision" \
-            --extra-index-url https://download.pytorch.org/whl/cu124
-        
+            --extra-index-url https://download.pytorch.org/whl/cu124 \
+            2>&1 | tail -5
+
         echo "  ✓ Installed with rerun-sdk workaround"
     else
-        echo "  ✘ Install failed for a different reason. Check /tmp/openpi_install.log"
+        echo "  ✘ Install failed for a different reason."
+        echo "  Last 30 lines of /tmp/openpi_install.log:"
         tail -30 /tmp/openpi_install.log
         exit 1
     fi
 fi
+echo ""
 
 # Step 4e: Install openpi-client package
-echo ""
 echo "  [4e] Installing openpi-client..."
-${VENV}/bin/pip install --no-cache-dir -e "${OPENPI}/packages/openpi-client"
+if [[ -d "${OPENPI}/packages/openpi-client" ]]; then
+    ${VENV}/bin/pip install --no-cache-dir -e "${OPENPI}/packages/openpi-client" 2>&1 | tail -3
+    echo "  ✓ openpi-client installed"
+else
+    echo "  ⚠ openpi-client directory not found (skipping)"
+fi
 
 echo ""
 echo "  ✓ All packages installed!"
@@ -296,13 +306,26 @@ echo "[5/6] Setting up paths & activation script..."
 mkdir -p "${DATASET_DIR}"
 mkdir -p "${LOG_DIR}"
 mkdir -p "$(dirname ${HF_SYMLINK})"
-[[ -L "${HF_SYMLINK}" ]] || ln -sf "${DATASET_DIR}" "${HF_SYMLINK}"
 
-# Create an activation script that SLURM jobs source
-# This ensures LD_LIBRARY_PATH is set correctly at runtime
+# Create or update symlink
+if [[ -L "${HF_SYMLINK}" ]]; then
+    rm -f "${HF_SYMLINK}"
+fi
+ln -sf "${DATASET_DIR}" "${HF_SYMLINK}"
+
+# Create the activation script for SLURM runtime
+# THIS is where LD_LIBRARY_PATH gets set — only for runtime, never during install
 cat > "${VENV}/activate_hpc.sh" << ACTIVATE_EOF
 #!/bin/bash
-# Source this in SLURM scripts: source ${VENV}/activate_hpc.sh
+# ═══════════════════════════════════════════════════════════════
+# Source this in SLURM scripts BEFORE running Python:
+#   source "${VENV}/activate_hpc.sh"
+#
+# This sets LD_LIBRARY_PATH so that dynamically loaded .so files
+# (torch, jax, etc.) can find glibc 2.28 symbols at runtime.
+#
+# DO NOT source this before running pip/system commands!
+# ═══════════════════════════════════════════════════════════════
 export PATH="${VENV}/bin:\${PATH}"
 export LD_LIBRARY_PATH="${SYSROOT}/lib64:${SYSROOT}/usr/lib64:${VENV}/lib:\${LD_LIBRARY_PATH:-}"
 export CONDA_PREFIX="${VENV}"
@@ -314,17 +337,20 @@ ACTIVATE_EOF
 chmod +x "${VENV}/activate_hpc.sh"
 
 echo "  ✓ Activation script: ${VENV}/activate_hpc.sh"
-echo "  ✓ Dataset symlink: ${HF_SYMLINK}"
+echo "  ✓ Dataset symlink: ${HF_SYMLINK} → ${DATASET_DIR}"
 echo "  ✓ Log directory: ${LOG_DIR}"
 echo ""
 
 # ═════════════════════════════════════════════════════════════════
 # STEP 6: Verify the installation
+#
+# NOW we source activate_hpc.sh (sets LD_LIBRARY_PATH) because we're
+# done with pip and only running Python imports (no system binaries).
 # ═════════════════════════════════════════════════════════════════
 echo "[6/6] Verifying installation..."
 echo ""
 
-# Source the activation script (as SLURM would)
+# Source activation (safe now — no more pip/subprocess calls to system binaries)
 source "${VENV}/activate_hpc.sh"
 
 cd "${OPENPI}"
@@ -408,9 +434,9 @@ if [[ ${VERIFY_STATUS} -eq 0 ]]; then
     echo "  Activate:    source ${VENV}/activate_hpc.sh"
     echo ""
     echo "  Next steps:"
-    echo "    1. Setup W&B:    ${VENV}/bin/wandb login"
-    echo "    2. Train:        cd ${PROJECT}/hpc && bash 03_train.sh both"
-    echo "    3. Monitor:      bash 04_status.sh"
+    echo "    1. W&B login:  source ${VENV}/activate_hpc.sh && wandb login"
+    echo "    2. Train:      cd ${PROJECT}/hpc && bash 03_train.sh both"
+    echo "    3. Monitor:    bash 04_status.sh"
     echo ""
 else
     echo "═════════════════════════════════════════════════════════════════"
@@ -418,7 +444,7 @@ else
     echo "═════════════════════════════════════════════════════════════════"
     echo "  Some packages failed to import. Common fixes:"
     echo "    - Check /tmp/openpi_install.log for pip errors"
-    echo "    - Run: source ${VENV}/activate_hpc.sh && python -c 'import torch'"
-    echo "    - If glibc issues persist, check: ldd ${VENV}/bin/python"
+    echo "    - Try: source ${VENV}/activate_hpc.sh && python -c 'import torch'"
+    echo "    - If glibc issues persist, check: ldd ${VENV}/bin/python3.11"
     exit 1
 fi
