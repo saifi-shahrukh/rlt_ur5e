@@ -363,25 +363,34 @@ fi
 ln -sf "${DATASET_DIR}" "${HF_SYMLINK}"
 
 # Create the activation script for SLURM runtime
-# THIS is where LD_LIBRARY_PATH gets set — only for runtime, never during install
+# IMPORTANT: Do NOT set LD_LIBRARY_PATH globally — it breaks system commands!
+# Python already has RPATH set by patchelf so it loads glibc 2.28 automatically.
+# For .so files loaded at runtime (torch, jax), we use a wrapper function.
 cat > "${VENV}/activate_hpc.sh" << ACTIVATE_EOF
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
 # Source this in SLURM scripts BEFORE running Python:
 #   source "${VENV}/activate_hpc.sh"
 #
-# This sets LD_LIBRARY_PATH so that dynamically loaded .so files
-# (torch, jax, etc.) can find glibc 2.28 symbols at runtime.
+# Sets PATH (so 'python' and 'uv' are found) and environment vars.
+# Does NOT set LD_LIBRARY_PATH globally (would break ls, cat, etc.)
 #
-# DO NOT source this before running pip/system commands!
+# Python finds glibc 2.28 via RPATH (set by patchelf).
+# For torch/jax .so loading, use: run_python <script> [args]
 # ═══════════════════════════════════════════════════════════════
-export PATH="${VENV}/bin:\${PATH}"
-export LD_LIBRARY_PATH="${SYSROOT}/lib64:${SYSROOT}/usr/lib64:${VENV}/lib:\${LD_LIBRARY_PATH:-}"
+export PATH="${VENV}/bin:${HOME}/.local/bin:\${PATH}"
 export CONDA_PREFIX="${VENV}"
 export HF_HOME="${BEEGFS}/.cache/huggingface"
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.90
 export XLA_PYTHON_CLIENT_PREALLOCATE=true
 export WANDB_PROJECT="rlt-ur5e"
+
+# Wrapper: run python with LD_LIBRARY_PATH set ONLY for that process
+# Usage: run_python scripts/train.py pi0_ur5e_peg_insertion_lora --exp-name=test
+run_python() {
+    LD_LIBRARY_PATH="${SYSROOT}/lib64:${SYSROOT}/usr/lib64:${VENV}/lib:\${LD_LIBRARY_PATH:-}" \
+        "${VENV}/bin/python" "\$@"
+}
 ACTIVATE_EOF
 chmod +x "${VENV}/activate_hpc.sh"
 
@@ -393,16 +402,18 @@ echo ""
 # ═════════════════════════════════════════════════════════════════
 # STEP 6: Verify the installation
 #
-# NOW we source activate_hpc.sh (sets LD_LIBRARY_PATH) because we're
-# done with pip and only running Python imports (no system binaries).
+# Use LD_LIBRARY_PATH ONLY for the python process (not globally).
+# This avoids breaking system commands (ls, cat, etc.).
 # ═════════════════════════════════════════════════════════════════
 echo "[6/6] Verifying installation..."
 echo ""
 
-# Source activation (safe now — no more pip/subprocess calls to system binaries)
+# Source activation for PATH and env vars (no LD_LIBRARY_PATH)
 source "${VENV}/activate_hpc.sh"
 
 cd "${OPENPI}"
+# Run python with LD_LIBRARY_PATH set ONLY for this process
+LD_LIBRARY_PATH="${SYSROOT}/lib64:${SYSROOT}/usr/lib64:${VENV}/lib:${LD_LIBRARY_PATH:-}" \
 ${VENV}/bin/python << 'VERIFY_EOF'
 import sys
 import os

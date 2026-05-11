@@ -50,7 +50,7 @@ echo ""
 nvidia-smi
 echo ""
 
-python scripts/train.py ${CONFIG} \
+run_python scripts/train.py ${CONFIG} \
     --exp-name=${EXP_NAME} \
     --overwrite
 
