@@ -72,54 +72,17 @@ echo ""
 # Clean any broken dataset cache
 rm -rf /data/beegfs/home/saifi/.cache/huggingface/datasets/parquet/default-*/*.incomplete 2>/dev/null || true
 
-# ─── Fix ptxas/nvlink (patchelf to use sysroot ld-linux) ─────────────────────
-# ptxas/nvlink from cuda-nvcc conda package need glibc 2.28.
-# When LD_LIBRARY_PATH has sysroot, system-linked binaries crash.
-# Patchelf makes them use sysroot's ld-linux directly.
-PATCHELF="${VENV}/bin/patchelf"
-
-fix_binary() {
-    local BINARY="$1"
-    if [[ ! -f "${BINARY}" ]] || [[ -L "${BINARY}" ]]; then
-        return 0
-    fi
-    local CURRENT_INTERP=$(${PATCHELF} --print-interpreter "${BINARY}" 2>/dev/null || echo "")
-    if [[ "${CURRENT_INTERP}" != *"sysroot"* ]]; then
-        echo "  Patching: ${BINARY}"
-        ${PATCHELF} --set-interpreter "${SYSROOT}/lib64/ld-linux-x86-64.so.2" \
-                   --set-rpath "${SYSROOT}/lib64:${SYSROOT}/usr/lib64" \
-                   "${BINARY}" 2>/dev/null || echo "  WARNING: patchelf failed for ${BINARY}"
-    fi
-}
-
-# Patch conda-installed binaries
-if [[ -f "${VENV}/bin/ptxas" ]]; then
-    fix_binary "${VENV}/bin/ptxas"
-    echo "  ptxas: $(${VENV}/bin/ptxas --version 2>&1 | grep -i release || echo 'version check failed')"
-fi
-if [[ -f "${VENV}/bin/nvlink" ]]; then
-    fix_binary "${VENV}/bin/nvlink"
-fi
-
-# Also patch pip-installed binaries (XLA checks these paths)
-PIP_CUDA="${VENV}/lib/python3.11/site-packages/nvidia/cuda_nvcc/bin"
-if [[ -d "${PIP_CUDA}" ]]; then
-    for bin in ptxas nvlink; do
-        [[ -f "${PIP_CUDA}/${bin}" ]] && fix_binary "${PIP_CUDA}/${bin}"
-    done
-fi
-
 # ─── Launch Training ─────────────────────────────────────────────────────────
-# Set LD_LIBRARY_PATH NOW (after all system commands and patchelf are done).
-# Workers inherit this so they also get glibc 2.28 libs.
-export LD_LIBRARY_PATH="${SYSROOT}/lib64:${SYSROOT}/usr/lib64:${VENV}/lib:${LD_LIBRARY_PATH:-}"
+# Do NOT export LD_LIBRARY_PATH — ptxas needs clean system env.
+# Main process gets sysroot libs via --library-path.
+# Use --num-workers=0 to avoid spawning child processes.
 
-# Launch through sysroot's ld-linux
 ${SYSROOT}/lib64/ld-linux-x86-64.so.2 \
     --library-path "${SYSROOT}/lib64:${SYSROOT}/usr/lib64:${VENV}/lib" \
     ${VENV}/bin/python3.11 scripts/train.py ${CONFIG} \
     --exp-name=${EXP_NAME} \
-    --overwrite
+    --overwrite \
+    --num-workers=0
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════"

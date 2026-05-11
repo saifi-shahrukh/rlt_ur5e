@@ -72,66 +72,21 @@ echo ""
 # Clean any broken dataset cache from previous failed runs
 rm -rf /data/beegfs/home/saifi/.cache/huggingface/datasets/parquet/default-*/*.incomplete 2>/dev/null || true
 
-# Patchelf ptxas/nvlink to use sysroot ld-linux (same approach as Python).
-# When LD_LIBRARY_PATH has sysroot libs, system binaries crash because
-# system ld-linux 2.17 can't load sysroot libc 2.28. Patchelf makes them
-# use sysroot ld-linux 2.28 directly, so they work with any LD_LIBRARY_PATH.
-PATCHELF="${VENV}/bin/patchelf"
-if [[ -f "${VENV}/bin/ptxas.real" ]]; then
-    # Only patchelf once (check if interpreter is already sysroot)
-    CURRENT_INTERP=$(${PATCHELF} --print-interpreter "${VENV}/bin/ptxas.real" 2>/dev/null || echo "")
-    if [[ "${CURRENT_INTERP}" != *"sysroot"* ]]; then
-        ${PATCHELF} --set-interpreter "${SYSROOT}/lib64/ld-linux-x86-64.so.2" \
-                   --set-rpath "${SYSROOT}/lib64:${SYSROOT}/usr/lib64" \
-                   "${VENV}/bin/ptxas.real"
-    fi
-    rm -f "${VENV}/bin/ptxas"
-    ln -sf ptxas.real "${VENV}/bin/ptxas"
-    echo "ptxas: $(${VENV}/bin/ptxas --version 2>&1 | grep release || echo 'FAILED')"
-fi
-if [[ -f "${VENV}/bin/nvlink.real" ]]; then
-    CURRENT_INTERP=$(${PATCHELF} --print-interpreter "${VENV}/bin/nvlink.real" 2>/dev/null || echo "")
-    if [[ "${CURRENT_INTERP}" != *"sysroot"* ]]; then
-        ${PATCHELF} --set-interpreter "${SYSROOT}/lib64/ld-linux-x86-64.so.2" \
-                   --set-rpath "${SYSROOT}/lib64:${SYSROOT}/usr/lib64" \
-                   "${VENV}/bin/nvlink.real"
-    fi
-    rm -f "${VENV}/bin/nvlink"
-    ln -sf nvlink.real "${VENV}/bin/nvlink"
-    echo "nvlink: $(${VENV}/bin/nvlink --version 2>&1 | grep release || echo 'FAILED')"
-fi
-# Also patchelf pip-installed ptxas/nvlink (XLA checks these paths too)
-PIP_CUDA="${VENV}/lib/python3.11/site-packages/nvidia/cuda_nvcc/bin"
-if [[ -f "${PIP_CUDA}/ptxas" ]] && [[ ! -L "${PIP_CUDA}/ptxas" ]]; then
-    CURRENT_INTERP=$(${PATCHELF} --print-interpreter "${PIP_CUDA}/ptxas" 2>/dev/null || echo "")
-    if [[ "${CURRENT_INTERP}" != *"sysroot"* ]]; then
-        ${PATCHELF} --set-interpreter "${SYSROOT}/lib64/ld-linux-x86-64.so.2" \
-                   --set-rpath "${SYSROOT}/lib64:${SYSROOT}/usr/lib64" \
-                   "${PIP_CUDA}/ptxas"
-    fi
-fi
-if [[ -f "${PIP_CUDA}/nvlink" ]] && [[ ! -L "${PIP_CUDA}/nvlink" ]]; then
-    CURRENT_INTERP=$(${PATCHELF} --print-interpreter "${PIP_CUDA}/nvlink" 2>/dev/null || echo "")
-    if [[ "${CURRENT_INTERP}" != *"sysroot"* ]]; then
-        ${PATCHELF} --set-interpreter "${SYSROOT}/lib64/ld-linux-x86-64.so.2" \
-                   --set-rpath "${SYSROOT}/lib64:${SYSROOT}/usr/lib64" \
-                   "${PIP_CUDA}/nvlink"
-    fi
-fi
-
 # ─── Launch Training ─────────────────────────────────────────────────────────
-# Set LD_LIBRARY_PATH NOW (after all system commands are done).
-# This is inherited by multiprocessing worker subprocesses so they
-# also load sysroot glibc 2.28 libs (fixes librt.so.1 __clock_nanosleep error).
-export LD_LIBRARY_PATH="${SYSROOT}/lib64:${SYSROOT}/usr/lib64:${VENV}/lib:${LD_LIBRARY_PATH:-}"
+# KEY INSIGHT: Do NOT export LD_LIBRARY_PATH globally.
+# - Main process: gets sysroot libs via ld-linux's --library-path (not env var)
+# - ptxas/nvlink: JAX spawns these as subprocesses; they need a CLEAN environment
+#   (system glibc 2.17) to work. If LD_LIBRARY_PATH is set, they crash.
+# - Data loading: use --num-workers=0 so no child processes are spawned
+#   (avoids the librt.so.1 __clock_nanosleep issue entirely).
+#   Trade-off: slightly slower data loading, but training works!
 
-# Launch through sysroot's ld-linux (main process uses --library-path,
-# spawned workers inherit LD_LIBRARY_PATH — both get glibc 2.28)
 ${SYSROOT}/lib64/ld-linux-x86-64.so.2 \
     --library-path "${SYSROOT}/lib64:${SYSROOT}/usr/lib64:${VENV}/lib" \
     ${VENV}/bin/python3.11 scripts/train.py ${CONFIG} \
     --exp-name=${EXP_NAME} \
-    --overwrite
+    --overwrite \
+    --num-workers=0
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════"

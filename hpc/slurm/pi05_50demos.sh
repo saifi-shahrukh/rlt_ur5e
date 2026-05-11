@@ -63,32 +63,17 @@ echo ""
 
 rm -rf /data/beegfs/home/saifi/.cache/huggingface/datasets/parquet/default-*/*.incomplete 2>/dev/null || true
 
-# ─── Fix ptxas/nvlink ────────────────────────────────────────────────────────
-PATCHELF="${VENV}/bin/patchelf"
-fix_binary() {
-    local BINARY="$1"
-    [[ ! -f "${BINARY}" ]] || [[ -L "${BINARY}" ]] && return 0
-    local INTERP=$(${PATCHELF} --print-interpreter "${BINARY}" 2>/dev/null || echo "")
-    if [[ "${INTERP}" != *"sysroot"* ]]; then
-        ${PATCHELF} --set-interpreter "${SYSROOT}/lib64/ld-linux-x86-64.so.2" \
-                   --set-rpath "${SYSROOT}/lib64:${SYSROOT}/usr/lib64" \
-                   "${BINARY}" 2>/dev/null || true
-    fi
-}
-[[ -f "${VENV}/bin/ptxas" ]] && fix_binary "${VENV}/bin/ptxas"
-[[ -f "${VENV}/bin/nvlink" ]] && fix_binary "${VENV}/bin/nvlink"
-PIP_CUDA="${VENV}/lib/python3.11/site-packages/nvidia/cuda_nvcc/bin"
-[[ -f "${PIP_CUDA}/ptxas" ]] && fix_binary "${PIP_CUDA}/ptxas"
-[[ -f "${PIP_CUDA}/nvlink" ]] && fix_binary "${PIP_CUDA}/nvlink"
-
 # ─── Launch Training ─────────────────────────────────────────────────────────
-export LD_LIBRARY_PATH="${SYSROOT}/lib64:${SYSROOT}/usr/lib64:${VENV}/lib:${LD_LIBRARY_PATH:-}"
+# Do NOT export LD_LIBRARY_PATH — ptxas needs clean system env.
+# Main process gets sysroot libs via --library-path.
+# Use --num-workers=0 to avoid spawning child processes.
 
 ${SYSROOT}/lib64/ld-linux-x86-64.so.2 \
     --library-path "${SYSROOT}/lib64:${SYSROOT}/usr/lib64:${VENV}/lib" \
     ${VENV}/bin/python3.11 scripts/train.py ${CONFIG} \
     --exp-name=${EXP_NAME} \
-    --overwrite
+    --overwrite \
+    --num-workers=0
 
 echo "✓ π0.5 Training Complete! $(date)"
 echo "Checkpoint: ${OPENPI}/checkpoints/${CONFIG}/${EXP_NAME}/"
