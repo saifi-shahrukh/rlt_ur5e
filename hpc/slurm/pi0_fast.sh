@@ -36,6 +36,7 @@ export HF_LEROBOT_HOME="/data/beegfs/home/saifi/.cache/huggingface/lerobot"
 # JAX/XLA
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.90
 export XLA_PYTHON_CLIENT_PREALLOCATE=true
+export XLA_FLAGS="--xla_gpu_unsafe_fallback_to_driver_on_ptxas_not_found"
 
 # W&B (train.py uses project="openpi" hardcoded)
 export WANDB_API_KEY=$(grep -s 'password' ~/.netrc | awk '{print $NF}' 2>/dev/null || echo "")
