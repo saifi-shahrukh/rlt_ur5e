@@ -67,8 +67,6 @@ echo ""
 rm -rf /data/beegfs/home/saifi/.cache/huggingface/datasets/parquet/default-*/*.incomplete 2>/dev/null || true
 
 # ─── Launch Training ─────────────────────────────────────────────────────────
-${SYSROOT}/lib64/ld-linux-x86-64.so.2 \
-    --library-path "${SYSROOT}/lib64:${SYSROOT}/usr/lib64:${VENV}/lib" \
     ${VENV}/bin/python3.11 scripts/train.py ${CONFIG} \
     --exp-name=${EXP_NAME} \
     --overwrite \

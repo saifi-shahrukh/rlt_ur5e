@@ -70,8 +70,6 @@ rm -rf /data/beegfs/home/saifi/.cache/huggingface/datasets/parquet/default-*/*.i
 # π0.5: batch=4 + grad_accumulation=4 → effective batch=16
 # Avoids XLA rematerialization OOM (18.86 GiB activations with batch=16)
 
-${SYSROOT}/lib64/ld-linux-x86-64.so.2 \
-    --library-path "${SYSROOT}/lib64:${SYSROOT}/usr/lib64:${VENV}/lib" \
     ${VENV}/bin/python3.11 scripts/train.py ${CONFIG} \
     --exp-name=${EXP_NAME} \
     --overwrite \

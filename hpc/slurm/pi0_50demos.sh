@@ -65,12 +65,10 @@ nvidia-smi
 echo ""
 
 # ─── Launch Training ─────────────────────────────────────────────────────────
-# No LD_LIBRARY_PATH — ptxas needs clean system env.
-# Python is patchelf'd to use sysroot ld-linux; workers inherit this.
-# --library-path provides sysroot libs to main process only.
+# Python has RPATH set to sysroot libs (via fix_python_rpath.sh).
+# Workers inherit the patchelf interpreter + RPATH -> no LD_LIBRARY_PATH needed.
 
-${SYSROOT}/lib64/ld-linux-x86-64.so.2 \
-    --library-path "${SYSROOT}/lib64:${SYSROOT}/usr/lib64:${VENV}/lib" \
+
     ${VENV}/bin/python3.11 scripts/train.py ${CONFIG} \
     --exp-name=${EXP_NAME} \
     --overwrite \

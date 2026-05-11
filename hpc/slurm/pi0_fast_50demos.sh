@@ -68,8 +68,6 @@ echo ""
 # π0-FAST is lighter — batch=8 with grad_accumulation=2 (effective batch=16)
 # FAST uses discrete action tokens, much less memory than diffusion
 
-${SYSROOT}/lib64/ld-linux-x86-64.so.2 \
-    --library-path "${SYSROOT}/lib64:${SYSROOT}/usr/lib64:${VENV}/lib" \
     ${VENV}/bin/python3.11 scripts/train.py ${CONFIG} \
     --exp-name=${EXP_NAME} \
     --overwrite \
