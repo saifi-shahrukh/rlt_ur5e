@@ -4,10 +4,10 @@ Two modes:
   cartesian  — WASD/RF keys drive the TCP; Jacobian IK returns joint targets
   freedrive  — human physically guides the robot; read-back joints as action
 
-Key Mapping (cartesian mode — all from operator's perspective, standing in front of robot):
+Key Mapping (cartesian mode — matching CAMERA view / on-screen directions):
   Translation:
-    W/S → −X/+X  (W=away from operator, S=toward operator)
-    A/D → −Y/+Y  (A=operator's left, D=operator's right)
+    W/S → +X/−X  (W=forward in image, S=backward in image)
+    A/D → +Y/−Y  (A=left in image, D=right in image)
     Q/E → +Z/−Z  (Q=up, E=down)
   Rotation (clockwise = CW when looking at the robot along that axis):
     I/K → CW/ACW around X
@@ -39,14 +39,15 @@ class KeyboardUR5e(Teleoperator):
     name = "keyboard_ur5e"
 
     # key → (cartesian_axis_index, sign)
-    # All directions are from OPERATOR's perspective (standing in front of robot, facing it).
-    # Translations: W=away, S=toward, A=left, D=right, Q=up, E=down
+    # All directions are from CAMERA's perspective (matching what you see on screen).
+    # Translations: W=forward(+X in image), S=backward(-X in image),
+    #              A=left(-Y in image), D=right(+Y in image), Q=up, E=down
     # Rotations: "clockwise" = CW when looking at the robot along that axis.
     #   Since robot +X points toward operator, +Rx = CCW from operator's view.
     #   So CW from operator = -Rx, -Ry, -Rz (all flipped).
     _KEY_MAP: dict[str, tuple[int, int]] = {
-        "w": (0, -1), "s": (0, +1),   # X  W=away(-X) / S=toward(+X)
-        "a": (1, -1), "d": (1, +1),   # Y  A=left(-Y) / D=right(+Y)
+        "w": (0, +1), "s": (0, -1),   # X  W=forward(+X) / S=backward(-X)
+        "a": (1, +1), "d": (1, -1),   # Y  A=left(+Y) / D=right(-Y)
         "q": (2, +1), "e": (2, -1),   # Z  Q=up(+Z) / E=down(-Z)
         "i": (3, -1), "k": (3, +1),   # Rx I=CW(-Rx) / K=ACW(+Rx) around X
         "j": (4, -1), "l": (4, +1),   # Ry J=CW(-Ry) / L=ACW(+Ry) around Y
@@ -107,7 +108,7 @@ class KeyboardUR5e(Teleoperator):
         logger.info(f"{self} connected  mode={mode}")
         if mode == "cartesian":
             logger.info(
-                "  Translation: W/S=±X(away/toward)  A/D=±Y(left/right)  Q/E=±Z(up/down)\n"
+                "  Translation: W/S=±X(fwd/back in image)  A/D=±Y(left/right in image)  Q/E=±Z(up/down)\n"
                 "  Rotation:    I/K=CW/ACW around X  J/L=CW/ACW around Y  U/O=CW/ACW around Z\n"
                 "  Gripper:     G (toggle)   Speed: +/- keys"
             )
