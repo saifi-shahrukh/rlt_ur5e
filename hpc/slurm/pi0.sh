@@ -31,7 +31,7 @@ export HF_HOME="/data/beegfs/home/saifi/.cache/huggingface"
 export HF_TOKEN=$(cat /data/beegfs/home/saifi/.cache/huggingface/token 2>/dev/null || echo "")
 export HF_HUB_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
-export LEROBOT_HOME="/data/beegfs/home/saifi/.cache/huggingface/lerobot"
+export HF_LEROBOT_HOME="/data/beegfs/home/saifi/.cache/huggingface/lerobot"
 
 # JAX/XLA
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.90
