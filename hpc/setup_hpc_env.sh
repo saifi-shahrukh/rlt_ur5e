@@ -190,94 +190,137 @@ fi
 echo ""
 
 # ═════════════════════════════════════════════════════════════════
-# STEP 4: Install OpenPI with ALL dependencies
+# STEP 4: Install OpenPI with ALL dependencies using UV SYNC
 #
-# NOW that Python sees glibc 2.28 (via RPATH, NOT LD_LIBRARY_PATH),
-# pip will happily download manylinux_2_28 wheels.
+# The original openpi-ur5e uses           which reads the uv.lock
+# file for EXACT pre-resolved dependencies. No resolver backtracking.
+# No --no-deps. This is the same approach as the original repo.
 #
-# IMPORTANT: We do NOT set LD_LIBRARY_PATH here!
-# System binaries (uname, gcc, etc.) spawned by pip would crash if
-# they found glibc 2.28's libc.so.6 in their library search path.
-# The RPATH on Python is sufficient for pip's glibc detection.
+# Key commands from original Dockerfile:
+#   uv sync --extra-index-url https://download.pytorch.org/whl/cu118
+#   uv pip install -e .
+#
+# We adapt for cu126 (torch 2.7.1 needs CUDA 12.6 index).
 # ═════════════════════════════════════════════════════════════════
 echo "[4/6] Installing OpenPI + all dependencies..."
-echo "  (This takes 10-20 minutes — downloading PyTorch ~2.5GB, JAX ~700MB, etc.)"
-echo ""
-echo "  NOTE: LD_LIBRARY_PATH is intentionally UNSET during installation."
-echo "  Python detects glibc 2.28 via RPATH. System binaries remain unaffected."
+echo "  Using: uv sync (same as original openpi-ur5e setup)"
+echo "  Reads uv.lock for exact pre-resolved dependencies."
+echo "  No resolver backtracking. No --no-deps."
 echo ""
 
-# Ensure conda's bin is in PATH (provides coreutils like uname if needed)
+# Ensure conda's bin is in PATH
 export PATH="${VENV}/bin:${PATH}"
 
 cd "${OPENPI}"
 
-# Step 4a: Pre-install ml-dtypes at the pinned version (from [tool.uv] override)
-# This prevents version conflicts during resolution
-echo "  [4a] Pre-installing ml-dtypes==0.4.1 (version override)..."
-${VENV}/bin/pip install --no-cache-dir "ml-dtypes==0.4.1" 2>&1 | tail -5
+# Step 4a: Install uv (standalone Rust binary — works on any Linux)
+echo "  [4a] Installing uv package manager..."
+if [[ -f "${HOME}/.local/bin/uv" ]]; then
+    export PATH="${HOME}/.local/bin:${PATH}"
+    echo "  ✓ uv already installed: $(uv --version)"
+elif command -v uv &>/dev/null; then
+    echo "  ✓ uv available: $(uv --version)"
+else
+    echo "  → Downloading uv..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh 2>&1 | tail -3
+    export PATH="${HOME}/.local/bin:${PATH}"
+    echo "  ✓ uv installed: $(uv --version)"
+fi
 echo ""
 
-# Step 4b: Install PyTorch with CUDA 12.4 from PyTorch's own index
-# (PyTorch wheels bundle their own CUDA runtime, so no system CUDA needed)
-echo "  [4b] Installing PyTorch 2.7.1 + CUDA 12.4..."
-${VENV}/bin/pip install --no-cache-dir \
-    "torch==2.7.1" \
-    --index-url https://download.pytorch.org/whl/cu124 \
-    2>&1 | tail -5
+# Step 4b: Set the Python version file (uv uses this)
+echo "3.11" > "${OPENPI}/.python-version"
+
+# Step 4c: Run uv sync to install ALL dependencies from uv.lock
+# This is EXACTLY what the original openpi-ur5e does.
+# The uv.lock file contains pre-resolved versions — no backtracking.
+#
+# UV_EXTRA_INDEX_URL tells uv where to find PyTorch CUDA wheels.
+# UV_PYTHON tells uv to use our patched Python (glibc 2.28).
+echo "  [4c] Running uv sync (installs everything from uv.lock)..."
+echo "       torch==2.7.1, jax==0.5.3, flax==0.10.2, lerobot, etc."
+echo "       This takes 5-15 minutes (downloading ~3GB of wheels)..."
 echo ""
 
-# Step 4c: Install the full OpenPI project (editable) with ALL dependencies
-# This respects pyproject.toml's version pins and installs the complete dep tree
-echo "  [4c] Installing OpenPI (editable) with full dependency tree..."
-echo "       This installs: jax, flax, orbax, lerobot, transformers, wandb, etc."
-${VENV}/bin/pip install --no-cache-dir \
-    -e . \
-    --extra-index-url https://download.pytorch.org/whl/cu124 \
-    2>&1 | tee /tmp/openpi_install.log | tail -20
+export UV_EXTRA_INDEX_URL="https://download.pytorch.org/whl/cu126"
+export UV_PYTHON="${VENV}/bin/python"
 
-INSTALL_STATUS=${PIPESTATUS[0]:-$?}
+uv sync \
+    --extra-index-url https://download.pytorch.org/whl/cu126 \
+    --python "${VENV}/bin/python" \
+    2>&1 | tee /tmp/openpi_install.log
 
-# Step 4d: Handle potential rerun-sdk failure
-# lerobot depends on rerun-sdk which needs X11/GL (not available on headless HPC).
-# If the full install failed due to rerun-sdk, do a targeted fix:
+INSTALL_STATUS=$?
+
+# Step 4d: If uv sync failed (likely rerun-sdk on headless HPC), handle it
 if [[ ${INSTALL_STATUS} -ne 0 ]]; then
     echo ""
-    echo "  ⚠ Full install had issues. Checking if it's rerun-sdk..."
-    if grep -qi "rerun\|rerun-sdk\|rerun_sdk" /tmp/openpi_install.log; then
-        echo "  → rerun-sdk failed (expected on headless HPC). Working around..."
+    echo "  ⚠ uv sync failed. Checking cause..."
+    
+    if grep -qi "rerun\|rerun-sdk\|rerun_sdk\|No solution found" /tmp/openpi_install.log; then
+        echo "  → Likely rerun-sdk issue (needs X11/GL on headless HPC)."
+        echo "  → Falling back to: uv pip install -e . (without lock file)..."
         echo ""
-
-        # Install OpenPI as editable (no deps, just the package itself)
-        ${VENV}/bin/pip install --no-cache-dir -e . --no-deps 2>&1 | tail -3
-
-        # Install all deps from pyproject.toml EXCEPT lerobot
-        ${VENV}/bin/pip install --no-cache-dir \
-            "augmax>=0.3.4" "dm-tree>=0.1.8" "einops>=0.8.0" "equinox>=0.11.8" \
-            "flatbuffers>=24.3.25" "flax==0.10.2" "fsspec[gcs]>=2024.6.0" \
-            "imageio>=2.36.1" "jax[cuda12]==0.5.3" "jaxtyping==0.2.36" \
-            "ml-collections==1.0.0" "numpy>=1.22.4" "numpydantic>=1.6.6" \
-            "opencv-python>=4.10.0.84" "orbax-checkpoint==0.11.13" \
-            "pillow>=11.0.0" "sentencepiece>=0.2.0" "tqdm-loggable>=0.2" \
-            "typing-extensions>=4.12.2" "tyro>=0.9.5" "wandb>=0.19.1" \
-            "filelock>=3.16.1" "beartype==0.19.0" "treescope>=0.1.7" \
-            "transformers==4.53.2" "rich>=14.0.0" "polars>=1.30.0" \
-            --extra-index-url https://download.pytorch.org/whl/cu124 \
-            2>&1 | tail -10
-
-        # Install lerobot WITHOUT rerun-sdk
-        ${VENV}/bin/pip install --no-cache-dir "lerobot>=0.4.0" --no-deps 2>&1 | tail -3
-        # Then install lerobot's key runtime deps that we actually use
-        ${VENV}/bin/pip install --no-cache-dir \
-            "datasets>=2.19" "huggingface-hub>=0.23" "safetensors" \
-            "draccus" "jsonlines" "pyarrow>=15.0" "torchvision" \
-            --extra-index-url https://download.pytorch.org/whl/cu124 \
-            2>&1 | tail -5
-
-        echo "  ✓ Installed with rerun-sdk workaround"
+        
+        # uv pip install resolves fresh but MUCH faster than pip
+        # It handles the complex dep graph in seconds
+        uv pip install \
+            -e . \
+            --extra-index-url https://download.pytorch.org/whl/cu126 \
+            --python "${VENV}/bin/python" \
+            2>&1 | tee /tmp/openpi_install2.log
+        
+        INSTALL_STATUS=$?
+        
+        if [[ ${INSTALL_STATUS} -ne 0 ]]; then
+            # If rerun-sdk still fails, install without it
+            if grep -qi "rerun" /tmp/openpi_install2.log; then
+                echo ""
+                echo "  → rerun-sdk build failed. Installing without it..."
+                
+                # Install openpi editable (no deps)
+                uv pip install -e . --no-deps --python "${VENV}/bin/python"
+                
+                # Install all deps except lerobot
+                uv pip install \
+                    "augmax>=0.3.4" "beartype==0.19.0" "dm-tree>=0.1.8" \
+                    "einops>=0.8.0" "equinox>=0.11.8" "filelock>=3.16.1" \
+                    "flatbuffers>=24.3.25" "flax==0.10.2" "fsspec[gcs]>=2024.6.0" \
+                    "gym-aloha>=0.1.1" "imageio>=2.36.1" "jax[cuda12]==0.5.3" \
+                    "jaxtyping==0.2.36" "ml-collections==1.0.0" "numpy>=1.22.4" \
+                    "numpydantic>=1.6.6" "opencv-python>=4.10.0.84" \
+                    "orbax-checkpoint==0.11.13" "pillow>=11.0.0" "polars>=1.30.0" \
+                    "rich>=14.0.0" "sentencepiece>=0.2.0" "tqdm-loggable>=0.2" \
+                    "transformers==4.53.2" "treescope>=0.1.7" "tyro>=0.9.5" \
+                    "typing-extensions>=4.12.2" "wandb>=0.19.1" "torch==2.7.1" \
+                    "ml-dtypes==0.4.1" \
+                    --extra-index-url https://download.pytorch.org/whl/cu126 \
+                    --python "${VENV}/bin/python" \
+                    2>&1 | tail -10
+                
+                # Install lerobot without rerun-sdk
+                uv pip install "lerobot>=0.4.0" --no-deps \
+                    --python "${VENV}/bin/python" 2>&1 | tail -3
+                
+                # Install lerobot's actual runtime deps
+                uv pip install \
+                    "datasets>=4.0.0" "huggingface-hub>=0.34" "safetensors" \
+                    "draccus==0.10.0" "jsonlines>=4.0.0" "pyarrow>=21.0" \
+                    "torchvision" "av>=15.0.0" "accelerate>=1.10.0" \
+                    "deepdiff>=7.0.1" "torchcodec>=0.2.1" \
+                    --extra-index-url https://download.pytorch.org/whl/cu126 \
+                    --python "${VENV}/bin/python" \
+                    2>&1 | tail -5
+                
+                echo "  ✓ Installed (rerun-sdk excluded — not needed for training)"
+            else
+                echo "  ✘ Install failed for a different reason."
+                tail -30 /tmp/openpi_install2.log
+                exit 1
+            fi
+        fi
     else
-        echo "  ✘ Install failed for a different reason."
-        echo "  Last 30 lines of /tmp/openpi_install.log:"
+        echo "  ✘ uv sync failed for unknown reason."
         tail -30 /tmp/openpi_install.log
         exit 1
     fi
@@ -287,10 +330,11 @@ echo ""
 # Step 4e: Install openpi-client package
 echo "  [4e] Installing openpi-client..."
 if [[ -d "${OPENPI}/packages/openpi-client" ]]; then
-    ${VENV}/bin/pip install --no-cache-dir -e "${OPENPI}/packages/openpi-client" 2>&1 | tail -3
+    uv pip install -e "${OPENPI}/packages/openpi-client" \
+        --python "${VENV}/bin/python" 2>&1 | tail -3
     echo "  ✓ openpi-client installed"
 else
-    echo "  ⚠ openpi-client directory not found (skipping)"
+    echo "  ⚠ openpi-client not found (skipping)"
 fi
 
 echo ""
