@@ -1,7 +1,7 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════════════════
 # SLURM: Train π0.5 LoRA (9 demos peg insertion)
-# Config: pi05_ur5e_peg_insertion_lora | batch_size=16 | 30k steps
+# Config: pi05_ur5e_peg_insertion_lora | V100 32GB optimized
 # ═══════════════════════════════════════════════════════════════════════════════
 #SBATCH --job-name=pi05_peg
 #SBATCH --partition=gpu
@@ -13,7 +13,7 @@
 #SBATCH --output=/data/beegfs/home/saifi/logs/pi05_peg_%j.out
 #SBATCH --error=/data/beegfs/home/saifi/logs/pi05_peg_%j.err
 
-set -e
+set -euo pipefail
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 OPENPI="/data/beegfs/home/saifi/rlt_ur5e/openpi_ur5e/openpi-ur5e"
@@ -22,71 +22,62 @@ SYSROOT="${VENV}/x86_64-conda-linux-gnu/sysroot"
 CONFIG="pi05_ur5e_peg_insertion_lora"
 EXP_NAME="peg_insertion_9demos"
 
-# ─── Environment (system commands work fine here - no LD_LIBRARY_PATH yet) ───
+# ─── Environment ─────────────────────────────────────────────────────────────
 export PATH="${VENV}/bin:${HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin:${PATH}"
 export CONDA_PREFIX="${VENV}"
 
-# HuggingFace: token for gated models + offline mode (dataset is local)
+# HuggingFace
 export HF_HOME="/data/beegfs/home/saifi/.cache/huggingface"
 export HF_TOKEN=$(cat /data/beegfs/home/saifi/.cache/huggingface/token 2>/dev/null || echo "")
 export HF_HUB_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 export HF_LEROBOT_HOME="/data/beegfs/home/saifi/.cache/huggingface/lerobot"
 
-# JAX/XLA
-export XLA_PYTHON_CLIENT_MEM_FRACTION=0.90
+# JAX/XLA — optimized for V100 32GB
+export XLA_PYTHON_CLIENT_MEM_FRACTION=0.95
 export XLA_PYTHON_CLIENT_PREALLOCATE=true
 export XLA_FLAGS="--xla_gpu_unsafe_fallback_to_driver_on_ptxas_not_found=true"
+export JAX_TRACEBACK_FILTERING=off
 
-# W&B (train.py uses project="openpi" hardcoded)
-# W&B: read API key from netrc (multi-line format) or fallback to env
+# W&B
 WANDB_KEY_FILE="${HOME}/.config/wandb/api_key"
 if [[ -f "${WANDB_KEY_FILE}" ]]; then
     export WANDB_API_KEY=$(cat "${WANDB_KEY_FILE}")
 elif [[ -f "${HOME}/.netrc" ]]; then
     export WANDB_API_KEY=$(awk '/api.wandb.ai/{found=1} found && /password/{print $2; exit}' ~/.netrc)
 fi
-if [[ -z "${WANDB_API_KEY:-}" ]]; then
-    export WANDB_MODE=offline
-fi
+[[ -z "${WANDB_API_KEY:-}" ]] && export WANDB_MODE=offline
 
-# ─── Pre-flight (system commands - before LD_LIBRARY_PATH) ───────────────────
+# ─── Pre-flight ──────────────────────────────────────────────────────────────
 cd "${OPENPI}"
 
-echo "═══════════════════════════════════��═══════════════════════════"
-echo "  Training π0.5 LoRA"
+echo "═══════════════════════════════════════════════════════════════"
+echo "  Training π0.5 LoRA — 9 demos | V100 32GB optimized"
 echo "  Config:   ${CONFIG}"
 echo "  Exp:      ${EXP_NAME}"
 echo "  Node:     $(hostname)"
 echo "  GPU:      $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -1)"
-echo "  HF_TOKEN: ${HF_TOKEN:+set}${HF_TOKEN:-NOT SET}"
-echo "  Offline:  HF_HUB_OFFLINE=${HF_HUB_OFFLINE}"
-echo "  W&B:      project=openpi (hardcoded in train.py)"
+echo "  Batch:    4 | GradAccum: 4 | Workers: 4 | Steps: 30k"
 echo "  Start:    $(date)"
 echo "═══════════════════════════════════════════════════════════════"
-echo ""
-
 nvidia-smi
 echo ""
 
-# Clean any broken dataset cache from previous failed runs
+# Clean any broken dataset cache
 rm -rf /data/beegfs/home/saifi/.cache/huggingface/datasets/parquet/default-*/*.incomplete 2>/dev/null || true
 
 # ─── Launch Training ─────────────────────────────────────────────────────────
-# KEY INSIGHT: Do NOT export LD_LIBRARY_PATH globally.
-# - Main process: gets sysroot libs via ld-linux's --library-path (not env var)
-# - ptxas/nvlink: JAX spawns these as subprocesses; they need a CLEAN environment
-#   (system glibc 2.17) to work. If LD_LIBRARY_PATH is set, they crash.
-# - Data loading: use --num-workers=0 so no child processes are spawned
-#   (avoids the librt.so.1 __clock_nanosleep issue entirely).
-#   Trade-off: slightly slower data loading, but training works!
+# π0.5: batch=4 + grad_accumulation=4 → effective batch=16
+# Avoids XLA rematerialization OOM (18.86 GiB activations with batch=16)
 
 ${SYSROOT}/lib64/ld-linux-x86-64.so.2 \
     --library-path "${SYSROOT}/lib64:${SYSROOT}/usr/lib64:${VENV}/lib" \
     ${VENV}/bin/python3.11 scripts/train.py ${CONFIG} \
     --exp-name=${EXP_NAME} \
     --overwrite \
-    --num-workers=0
+    --batch-size=4 \
+    --grad-accumulation-steps=4 \
+    --num-workers=4
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
