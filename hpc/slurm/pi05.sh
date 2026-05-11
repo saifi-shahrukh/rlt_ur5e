@@ -39,7 +39,16 @@ export XLA_PYTHON_CLIENT_PREALLOCATE=true
 export XLA_FLAGS="--xla_gpu_unsafe_fallback_to_driver_on_ptxas_not_found"
 
 # W&B (train.py uses project="openpi" hardcoded)
-export WANDB_API_KEY=$(grep -s 'password' ~/.netrc | awk '{print $NF}' 2>/dev/null || echo "")
+# W&B: read API key from netrc (multi-line format) or fallback to env
+WANDB_KEY_FILE="${HOME}/.config/wandb/api_key"
+if [[ -f "${WANDB_KEY_FILE}" ]]; then
+    export WANDB_API_KEY=$(cat "${WANDB_KEY_FILE}")
+elif [[ -f "${HOME}/.netrc" ]]; then
+    export WANDB_API_KEY=$(awk '/api.wandb.ai/{found=1} found && /password/{print $2; exit}' ~/.netrc)
+fi
+if [[ -z "${WANDB_API_KEY:-}" ]]; then
+    export WANDB_MODE=offline
+fi
 
 # ─── Pre-flight (system commands - before LD_LIBRARY_PATH) ───────────────────
 cd "${OPENPI}"
