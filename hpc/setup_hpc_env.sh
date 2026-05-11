@@ -247,6 +247,7 @@ export UV_PYTHON="${VENV}/bin/python"
 
 uv sync \
     --extra-index-url https://download.pytorch.org/whl/cu126 \
+    --index-strategy unsafe-best-match \
     --python "${VENV}/bin/python" \
     2>&1 | tee /tmp/openpi_install.log
 
@@ -267,6 +268,7 @@ if [[ ${INSTALL_STATUS} -ne 0 ]]; then
         uv pip install \
             -e . \
             --extra-index-url https://download.pytorch.org/whl/cu126 \
+            --index-strategy unsafe-best-match \
             --python "${VENV}/bin/python" \
             2>&1 | tee /tmp/openpi_install2.log
         
@@ -295,6 +297,7 @@ if [[ ${INSTALL_STATUS} -ne 0 ]]; then
                     "typing-extensions>=4.12.2" "wandb>=0.19.1" "torch==2.7.1" \
                     "ml-dtypes==0.4.1" \
                     --extra-index-url https://download.pytorch.org/whl/cu126 \
+                    --index-strategy unsafe-best-match \
                     --python "${VENV}/bin/python" \
                     2>&1 | tail -10
                 
@@ -309,6 +312,7 @@ if [[ ${INSTALL_STATUS} -ne 0 ]]; then
                     "torchvision" "av>=15.0.0" "accelerate>=1.10.0" \
                     "deepdiff>=7.0.1" "torchcodec>=0.2.1" \
                     --extra-index-url https://download.pytorch.org/whl/cu126 \
+                    --index-strategy unsafe-best-match \
                     --python "${VENV}/bin/python" \
                     2>&1 | tail -5
                 
@@ -331,6 +335,7 @@ echo ""
 echo "  [4e] Installing openpi-client..."
 if [[ -d "${OPENPI}/packages/openpi-client" ]]; then
     uv pip install -e "${OPENPI}/packages/openpi-client" \
+        --index-strategy unsafe-best-match \
         --python "${VENV}/bin/python" 2>&1 | tail -3
     echo "  ✓ openpi-client installed"
 else
