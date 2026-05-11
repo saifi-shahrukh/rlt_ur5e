@@ -98,6 +98,7 @@ ${MICROMAMBA} create -p "${VENV}" \
     python=3.11 \
     pip \
     sysroot_linux-64=2.28 \
+    ffmpeg \
     patchelf \
     coreutils \
     "libstdcxx-ng>=12" \
