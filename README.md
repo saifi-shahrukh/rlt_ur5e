@@ -1,186 +1,120 @@
-# RLT-UR5e: Reinforcement Learning Tokens for Peg Insertion
+# RLT UR5e — Robot Learning & Training for UR5e Manipulation
 
-> Implementation of ["RL Token: Bootstrapping Online RL with VLAs"](https://arxiv.org/abs/2604.23073) (Physical Intelligence, 2026)
-> on UR5e + Robotiq Hand-E for precision peg insertion.
-
----
-
-## Overview
-
-This project fine-tunes Vision-Language-Action (VLA) models and then improves their precision using online Reinforcement Learning via the RL Token framework.
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│  Phase 1: Fine-tune VLA (π0-FAST) on teleoperated demonstrations       │
-│  Phase 2: Train RL Token encoder (compress VLA embeddings → 512D)      │
-│  Phase 3: Online RL — SAC learns residual corrections on real robot    │
-│  Phase 4: Compare π0-FAST, π0, π0.5 with/without RLT                   │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-## Hardware
-
-| Component | Details |
-|-----------|--------|
-| Robot | Universal Robots UR5e (IP: 172.22.1.139) |
-| Gripper | Robotiq Hand-E |
-| Wrist Camera | Intel RealSense D435 (serial: 034422070605) |
-| Overhead Camera | Kinect v2 Xbox (serial: 000631452147) |
-| GPU | NVIDIA RTX 5070 Ti (16GB VRAM) |
-| Teleop | Keyboard (cartesian mode) |
+Fine-tune Physical Intelligence's **OpenPI** foundation models (π0, π0.5, π0-FAST)
+for UR5e robot manipulation tasks using LoRA on the Fraunhofer IIS HPC cluster.
 
 ## Project Structure
 
-```
-rlt_ur5e/
-├── COMMANDS.md                  ← Full command reference
-├── README.md                    ← This file
-├── rlt.pdf                      ← Original paper
-├── scripts/
-│   ├── start_vla_server.sh      ← Terminal 1: serve VLA policy
-│   ├── run_vla_only.sh          ← VLA-only baseline inference
-│   ├── run_rlt_training.sh      ← Full RLT online RL training
-│   ├── run_rlt_eval.sh          ← Evaluate saved checkpoints
-│   └── collect_50_demos.sh      ← Record 50 demonstrations
-├── rlt/                         ← RLT implementation
-│   ├── agents/
-│   │   ├── sac_agent.py         ← JAX SAC (TD3-style, 2 Q-funcs)
-│   │   └── rlt_buffer.py        ← Replay buffer (chunked)
-│   ├── models/
-│   │   ├── rl_token.py          ← RL Token encoder-decoder
-│   │   ├── train_rl_token.py    ← RL Token training script
-│   │   └── extract_embeddings.py← Extract VLA embeddings
-│   ├── envs/
-│   │   └── ur5e_rlt_env.py      ← Gym env (SERL + VLA + RL Token)
-│   └── examples/
-│       └── peg_insertion/
-│           ├── config.py        ← All hyperparameters
-│           └── train_rlt.py     ← Main training loop
-├── checkpoints/
-│   ├── rl_token/                ← Trained RL Token models
-│   └── rlt_runs/                ← SAC agent checkpoints
-├── openpi_ur5e/                 ← VLA fine-tuning & serving
-│   ├── openpi-ur5e/             ← OpenPI fork (π0/π0-FAST/π0.5)
-│   └── lerobot_ur5e_gello/      ← Demo collection & inference
-└── ur5e_hil_serl/               ← Robot control & reward classifier
-```
+    rlt_ur5e/
+    ├── README.md                           # This file
+    ├── hpc/                                # HPC training scripts & docs
+    │   ├── README.md                       # Quick reference
+    │   ├── HPC_SETUP_README.md             # Detailed setup & troubleshooting
+    │   ├── ADDING_NEW_DATASET.md           # Guide for new datasets
+    │   ├── setup_hpc_env.sh                # One-time environment setup
+    │   ├── 03_train.sh                     # Submit training jobs
+    │   ├── 04_status.sh                    # Monitor jobs
+    │   ├── 05_download_checkpoints.sh      # Download trained models
+    │   └── slurm/                          # SLURM job scripts
+    │       ├── pi0.sh                      # π0 training
+    │       ├── pi05.sh                     # π0.5 training
+    │       └── pi0_fast.sh                 # π0-FAST training
+    ├── openpi_ur5e/                        # OpenPI framework (submodule)
+    │   └── openpi-ur5e/
+    │       ├── src/openpi/                 # Model & training code
+    │       ├── scripts/train.py            # Training entry point
+    │       ├── assets/                     # Pre-computed norm stats
+    │       ├── pyproject.toml              # Package definition
+    │       └── uv.lock                     # Pinned dependencies
+    └── update_on_readme.md                 # Development notes
 
-## Virtual Environments (3 venvs)
+## Models
 
-| Venv | Python | Purpose |
-|------|--------|---------|
-| `ur5e_hil_serl/.venv/` | 3.10 | RLT training, SAC, RL Token, robot control |
-| `openpi_ur5e/openpi-ur5e/.venv/` | 3.11 | VLA server (serve_policy.py) |
-| `openpi_ur5e/lerobot_ur5e_gello/.venv/` | 3.11 | Demo collection, VLA-only inference |
+| Model | Architecture | Params (LoRA) | VRAM | Training Time |
+|-------|-------------|---------------|------|---------------|
+| **π0** | Flow matching + VLM | ~50M trainable | ~16 GB | ~8-10 hrs |
+| **π0.5** | + Cross-attention | ~50M trainable | ~28 GB | ~10-12 hrs |
+| **π0-FAST** | Continuous action tokens | ~50M trainable | ~10 GB | ~4-6 hrs |
+
+All models use:
+- **PaliGemma 2B** vision-language model (LoRA)
+- **Gemma 300M** action expert (LoRA)
+- Pre-trained base weights from Google Cloud
+- Fine-tuned on task-specific demonstrations
+
+## Current Task: Peg Insertion
+
+- **Robot**: Universal Robots UR5e
+- **Task**: Insert peg into hole
+- **Demonstrations**: 9 episodes
+- **Cameras**: 2 (overhead + wrist-mounted)
+- **Action space**: 7-DOF (6 joints + gripper)
+- **Control**: 30 Hz, delta joint positions
 
 ## Quick Start
 
-### 1. Start VLA Server (Terminal 1)
+### Train on HPC
 
-```bash
-cd /home/robolab-2/ur5e_hande_workspace/rlt_ur5e/openpi_ur5e/openpi-ur5e
+    # SSH to cluster
+    ssh saifi@hpc-headnode.iis.fhg.de
+    cd /data/beegfs/home/saifi/rlt_ur5e/hpc
 
-.venv/bin/python scripts/serve_policy.py \
-  --port 8000 \
-  policy:checkpoint \
-  --policy.config pi0_fast_ur5e_peg_insertion_lora \
-  --policy.dir checkpoints/pi0_fast_ur5e_peg_insertion_lora/peg_insertion_run1/29999
-```
+    # First time: setup environment (~25 min)
+    bash setup_hpc_env.sh
+    huggingface-cli login
+    wandb login
 
-### 2. VLA-Only Baseline (Terminal 2)
+    # Submit all 3 models
+    bash 03_train.sh all
 
-```bash
-cd /home/robolab-2/ur5e_hande_workspace/rlt_ur5e/openpi_ur5e/lerobot_ur5e_gello
-source .venv/bin/activate
-export LD_LIBRARY_PATH=/home/robolab-2/freenect2/lib:${LD_LIBRARY_PATH:-}
+    # Monitor
+    squeue -u saifi
+    tail -f /data/beegfs/home/saifi/logs/pi0_peg_<JOBID>.out
+    # W&B: https://wandb.ai/saifi/openpi
 
-python scripts/remote_pi_inference_dual_cam.py \
-  --ip=localhost --port=8000 \
-  --prompt="Pick up the peg and insert it into the hole." \
-  --robot.type=ur5e_dual_cam --robot.ip=172.22.1.139 --fps=30
-```
+### Download Checkpoints
 
-### 3. RLT Online RL (Terminal 2)
+    # From local machine:
+    bash hpc/05_download_checkpoints.sh
 
-```bash
-cd /home/robolab-2/ur5e_hande_workspace/rlt_ur5e
-source ur5e_hil_serl/.venv/bin/activate
-export PYTHONPATH="$PWD:$PWD/ur5e_hil_serl:$PWD/ur5e_hil_serl/serl_robot_infra:$PWD/ur5e_hil_serl/examples:$PYTHONPATH"
-export JAX_PLATFORMS=cpu
+### Deploy for Inference
 
-python -m rlt.examples.peg_insertion.train_rlt
-```
+    # On a machine with GPU:
+    cd openpi_ur5e/openpi-ur5e
+    python scripts/serve_policy.py \
+        --config=pi0_ur5e_peg_insertion_lora \
+        --checkpoint=checkpoints/pi0_ur5e_peg_insertion_lora/peg_insertion_9demos/30000
 
-### 4. Collect 50 Demos
+## HPC Cluster Details
 
-```bash
-cd /home/robolab-2/ur5e_hande_workspace/rlt_ur5e/openpi_ur5e/lerobot_ur5e_gello
-source .venv/bin/activate
-export LD_LIBRARY_PATH=/home/robolab-2/freenect2/lib:${LD_LIBRARY_PATH:-}
+| Component | Specification |
+|-----------|---------------|
+| OS | CentOS 7 (glibc 2.17) |
+| GPUs | NVIDIA V100 32GB (SXM2) |
+| Filesystem | BeeGFS (network) |
+| Scheduler | SLURM |
+| Solution | sysroot glibc 2.28 + patchelf |
 
-python scripts/record.py \
-    --robot.type=ur5e_dual_cam --robot.ip=172.22.1.139 \
-    --teleop.type=keyboard_ur5e --teleop.robot_ip=172.22.1.139 --teleop.mode=cartesian \
-    --dataset.repo_id=saifi/ur5e-peg-insertion-dual \
-    --dataset.single_task="Pick up the peg and insert it into the hole." \
-    --dataset.root=/home/robolab-2/ur5e_hande_workspace/openpi_ur5e/datasets \
-    --dataset.num_episodes=50 --dataset.fps=30 --dataset.push_to_hub=False
-```
+See [hpc/HPC_SETUP_README.md](hpc/HPC_SETUP_README.md) for full technical details.
 
-## Architecture (from Paper)
+## Adding New Tasks
 
-```
-Images + Language → [FROZEN VLA] → embeddings → [RL Token Encoder] → z_rl (512D)
-                        ↓                                               ↓
-                   ã_ref (10×6D)                                   z_rl (512D)
-                        ↓                                               ↓
-                        └────────────────────┬──────────────────────────┘
-                                             ↓
-                  [SAC Actor: (z_rl, proprio, ã_ref) → residual chunk]
-                  [SAC Critic: Q(state, action) → value]
-                                             ↓
-                  final_action = ã_ref + clip(residual, ±3mm/±1.1°)
-                                             ↓
-                  [Robot executes 10 steps open-loop]
-                                             ↓
-                  [Reward: image classifier detects success → +1]
-```
+See [hpc/ADDING_NEW_DATASET.md](hpc/ADDING_NEW_DATASET.md) for:
+- Dataset format (LeRobot v2.0)
+- How to create training configs
+- Computing normalization statistics
+- Hyperparameter guidance
 
-**Key:** SAC sees NO images — only z_rl (512D compressed VLA state) + proprio (19D) + reference chunk (60D).
+## Experiment Tracking
 
-## Reward
-
-We use a **trained image reward classifier** (from HIL-SERL):
-- Watches wrist + overview cameras
-- 3 consecutive frames with probability > 0.70 → reward = +1
-- Located at: `ur5e_hil_serl/examples/classifier_ckpt/checkpoint_150/`
-
-## Current Status
-
-- [x] VLA fine-tuned (π0-FAST, 4 demos, 30k steps)
-- [x] RL Token trained (loss=0.109, 512D)
-- [x] SAC agent wired (TD3-style, 2 Q-funcs, [256,256])
-- [x] Full pipeline verified (fake env)
-- [x] VLA server working
-- [ ] VLA-only baseline measured (need clear gripper)
-- [ ] RLT online RL on real robot
-- [ ] 50 demos collected
-- [ ] Re-train with 50 demos
-- [ ] π0/π0.5 comparison (HPC)
-
-## Troubleshooting
-
-| Issue | Fix |
-|-------|-----|
-| `No module 'lerobot'` | Venv broken. Fix `pyvenv.cfg` and `activate` paths (see COMMANDS.md) |
-| `STOPPED_INNER_OBJECT` | Remove peg from gripper → clear protective stop → Remote Control mode |
-| `openpi_server: not found` | Use `.venv/bin/python scripts/serve_policy.py` instead |
-| BLAS error (JAX) | Set `export JAX_PLATFORMS=cpu` |
-| VRAM OOM | Kill zombie: `nvidia-smi` → `kill -9 <PID>` |
+All runs log to **Weights & Biases**:
+- Project: https://wandb.ai/saifi/openpi
+- Metrics: loss, learning_rate, grad_norm
+- Images: camera views logged at step 0
 
 ## References
 
-- [RL Token Paper](https://arxiv.org/abs/2604.23073)
-- [π0 / OpenPI](https://github.com/Physical-Intelligence/openpi)
-- [HIL-SERL](https://github.com/rail-berkeley/serl)
-- [LeRobot](https://github.com/huggingface/lerobot)
+- [OpenPI Paper](https://arxiv.org/abs/2407.01906) — π0 foundation model
+- [Physical Intelligence](https://www.physicalintelligence.company/) — Original authors
+- [Original openpi-ur5e](https://github.com/F-Fer/openpi-ur5e) — UR5e adaptation
+- [LeRobot](https://github.com/huggingface/lerobot) — Dataset format

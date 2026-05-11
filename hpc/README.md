@@ -1,72 +1,63 @@
-# HPC Setup for π0/π0.5 Fine-tuning
+# HPC Training Scripts
 
-> Fine-tune π0 and π0.5 LoRA on V100 32GB GPUs (9 demos, peg insertion task)
-> Cluster: Fraunhofer IIS HPC | GPUs: 4× Tesla V100 SXM2 32GB per node
+Train π0, π0.5, and π0-FAST models on Fraunhofer IIS HPC cluster.
 
----
+## What This Does
 
-## 🚀 Quick Start
+Fine-tunes Physical Intelligence's **OpenPI** foundation models (π0 family) using
+**LoRA** on 9 demonstrations of a UR5e robot performing peg insertion with dual cameras.
 
-### From HPC headnode:
-```bash
-ssh -x saifi@hpc-headnode.iis.fhg.de
-cd /data/beegfs/home/saifi/
-git clone git@github.com:saifi-shahrukh/rlt_ur5e.git
-cd rlt_ur5e/hpc
-bash 01_setup.sh          # one-time: install uv, create venv, wandb login
-```
+## Models
 
-### From LOCAL machine (transfer dataset):
-```bash
-cd ~/ur5e_hande_workspace/rlt_ur5e/hpc   # or wherever repo is
-bash 02_transfer_dataset.sh
-```
+| Model | Description | Training Time | VRAM |
+|-------|-------------|---------------|------|
+| **π0** | Standard flow matching policy | ~8-10 hrs | ~16 GB |
+| **π0.5** | Enhanced cross-attention architecture | ~10-12 hrs | ~28 GB |
+| **π0-FAST** | Lightweight continuous action tokens | ~4-6 hrs | ~10 GB |
 
-### Back on HPC:
-```bash
-bash 03_train.sh both     # π0 + π0.5 in parallel
-bash 04_status.sh         # monitor progress
-# Watch live: https://wandb.ai → project 'rlt-ur5e'
-```
+## Usage
 
-### When done, from LOCAL:
-```bash
-bash 05_download_checkpoints.sh
-```
+    # One-time setup (~25 min)
+    bash setup_hpc_env.sh
 
----
+    # Login to HuggingFace + W&B
+    huggingface-cli login
+    wandb login
 
-## 📁 Scripts
+    # Train (choose: pi0, pi05, pi0_fast, both, all)
+    bash 03_train.sh all
 
-| Script | Run On | Purpose |
-|--------|--------|----------|
-| `01_setup.sh` | HPC | Install uv, create venv, setup paths |
-| `02_transfer_dataset.sh` | LOCAL | rsync 9-demo dataset to cluster |
-| `03_train.sh` | HPC | Submit SLURM jobs (norm/pi0/pi05/both/all) |
-| `04_status.sh` | HPC | Monitor jobs, logs, checkpoints |
-| `05_download_checkpoints.sh` | LOCAL | Pull trained weights back |
-| `06_interactive.sh` | HPC | Get interactive GPU shell |
-| `slurm/norm_stats.sh` | (auto) | Compute norm stats for π0.5 |
-| `slurm/pi0.sh` | (auto) | Train π0 LoRA (30k steps, ~2h) |
-| `slurm/pi05.sh` | (auto) | Train π0.5 LoRA (30k steps, ~3h) |
+    # Monitor
+    squeue -u saifi
+    tail -f /data/beegfs/home/saifi/logs/pi0_peg_<JOBID>.out
+    # W&B: https://wandb.ai/saifi/openpi
 
----
+    # Download checkpoints to local machine
+    bash 05_download_checkpoints.sh
 
-## Key Details
+## Dataset
 
-- **Config names:** `pi0_ur5e_peg_insertion_lora` / `pi05_ur5e_peg_insertion_lora`
-- **Dataset:** `saifi/ur5e-peg-insertion-dual` (9 demos, dual camera)
-- **Norm stats:** All 3 configs pre-computed ✓ (pi0, pi0-FAST, pi0.5)
-- **Base weights:** Downloaded from `gs://openpi-assets/checkpoints/` (auto by training script)
-- **W&B:** Online logging — see live loss curves at https://wandb.ai
-- **No containers needed** — uses `uv` venv directly
+**UR5e Peg Insertion (Dual Camera)**
+- 9 expert demonstrations
+- 2 cameras: overhead + wrist-mounted
+- 7-DOF: 6 joint positions + 1 gripper
+- 30 Hz control frequency
+- Location: /data/beegfs/home/saifi/datasets/saifi/ur5e-peg-insertion-dual/
 
----
+## Scripts
 
-## Expected Times
+| Script | Purpose |
+|--------|─────────|
+| setup_hpc_env.sh | Full environment setup (glibc 2.28 + packages) |
+| 03_train.sh | Submit SLURM training jobs |
+| 04_status.sh | Check job status + recent logs |
+| 05_download_checkpoints.sh | SCP checkpoints to local |
+| 06_interactive.sh | Interactive GPU session for debugging |
 
-| Step | GPU | Duration |
-|------|-----|----------|
-| Norm stats (π0.5) | 1× V100 | ~10 min |
-| π0 LoRA (30k steps) | 1× V100 | ~2h |
-| π0.5 LoRA (30k steps) | 1× V100 | ~3h |
+## Detailed Documentation
+
+See [HPC_SETUP_README.md](HPC_SETUP_README.md) for:
+- Full setup walkthrough
+- Architecture diagram
+- Troubleshooting guide
+- Design decisions

@@ -1,26 +1,27 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════════════════
-# SLURM: Train π0 LoRA (9 demos peg insertion)
-# Config: pi0_ur5e_peg_insertion_lora | batch_size=4 | 30k steps
+# SLURM: Train π0-FAST LoRA (9 demos peg insertion)
+# Config: pi0_fast_ur5e_peg_insertion_lora | batch_size=16 | 30k steps
 # Norm stats: pre-computed in repo ✓
+# Note: Lightweight — uses continuous action tokens, fastest to train
 # ═══════════════════════════════════════════════════════════════════════════════
-#SBATCH --job-name=pi0_peg
+#SBATCH --job-name=pi0f_peg
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=12:00:00
-#SBATCH --output=/data/beegfs/home/saifi/logs/pi0_peg_%j.out
-#SBATCH --error=/data/beegfs/home/saifi/logs/pi0_peg_%j.err
+#SBATCH --output=/data/beegfs/home/saifi/logs/pi0fast_peg_%j.out
+#SBATCH --error=/data/beegfs/home/saifi/logs/pi0fast_peg_%j.err
 
 set -e
 
-# ─── Config ──────────────────────────────────────────────────────────────────
+# ─── Config ──────────────────────���───────────────────────────────────────────
 OPENPI="/data/beegfs/home/saifi/rlt_ur5e/openpi_ur5e/openpi-ur5e"
 VENV="${OPENPI}/.venv"
 SYSROOT="${VENV}/x86_64-conda-linux-gnu/sysroot"
-CONFIG="pi0_ur5e_peg_insertion_lora"
+CONFIG="pi0_fast_ur5e_peg_insertion_lora"
 EXP_NAME="peg_insertion_9demos"
 
 # ─── Environment ──────────────────────────────────────────────────────────────
@@ -48,7 +49,7 @@ RUN_PYTHON="${SYSROOT}/lib64/ld-linux-x86-64.so.2 --library-path ${SYSROOT}/lib6
 cd "${OPENPI}"
 
 echo "═══════════════════════════════════════════════════════════════"
-echo "  Training π0 LoRA"
+echo "  Training π0-FAST LoRA"
 echo "  Config:   ${CONFIG}"
 echo "  Exp:      ${EXP_NAME}"
 echo "  Node:     $(hostname)"
@@ -74,6 +75,6 @@ ${RUN_PYTHON} scripts/train.py ${CONFIG} \
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════"
-echo "  ✓ π0 Training Complete! $(date)"
+echo "  ✓ π0-FAST Training Complete! $(date)"
 echo "  Checkpoint: ${OPENPI}/checkpoints/${CONFIG}/${EXP_NAME}/"
 echo "═══════════════════════════════════════════════════════════════"
