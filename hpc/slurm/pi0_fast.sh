@@ -2,8 +2,6 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 # SLURM: Train π0-FAST LoRA (9 demos peg insertion)
 # Config: pi0_fast_ur5e_peg_insertion_lora | batch_size=16 | 30k steps
-# Norm stats: pre-computed in repo ✓
-# Note: Lightweight — uses continuous action tokens, fastest to train
 # ═══════════════════════════════════════════════════════════════════════════════
 #SBATCH --job-name=pi0f_peg
 #SBATCH --partition=gpu
@@ -17,14 +15,14 @@
 
 set -e
 
-# ─── Config ──────────────────────���───────────────────────────────────────────
+# ─── Config ──────────────────────────────────────────────────────────────────
 OPENPI="/data/beegfs/home/saifi/rlt_ur5e/openpi_ur5e/openpi-ur5e"
 VENV="${OPENPI}/.venv"
 SYSROOT="${VENV}/x86_64-conda-linux-gnu/sysroot"
 CONFIG="pi0_fast_ur5e_peg_insertion_lora"
 EXP_NAME="peg_insertion_9demos"
 
-# ─── Environment ──────────────────────────────────────────────────────────────
+# ─── Environment (system commands work fine here - no LD_LIBRARY_PATH yet) ───
 export PATH="${VENV}/bin:${HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin:${PATH}"
 export CONDA_PREFIX="${VENV}"
 
@@ -42,10 +40,7 @@ export XLA_PYTHON_CLIENT_PREALLOCATE=true
 # W&B (train.py uses project="openpi" hardcoded)
 export WANDB_API_KEY=$(grep -s 'password' ~/.netrc | awk '{print $NF}' 2>/dev/null || echo "")
 
-# The Python runner: uses sysroot's ld-linux to load ALL libs through glibc 2.28
-RUN_PYTHON="${SYSROOT}/lib64/ld-linux-x86-64.so.2 --library-path ${SYSROOT}/lib64:${SYSROOT}/usr/lib64:${VENV}/lib ${VENV}/bin/python3.11"
-
-# ─── Run ─────────────────────────────────────────────────────────────────────
+# ─── Pre-flight (system commands - before LD_LIBRARY_PATH) ───────────────────
 cd "${OPENPI}"
 
 echo "═══════════════════════════════════════════════════════════════"
@@ -54,7 +49,6 @@ echo "  Config:   ${CONFIG}"
 echo "  Exp:      ${EXP_NAME}"
 echo "  Node:     $(hostname)"
 echo "  GPU:      $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -1)"
-echo "  Python:   $(${RUN_PYTHON} --version 2>&1)"
 echo "  HF_TOKEN: ${HF_TOKEN:+set}${HF_TOKEN:-NOT SET}"
 echo "  Offline:  HF_HUB_OFFLINE=${HF_HUB_OFFLINE}"
 echo "  W&B:      project=openpi (hardcoded in train.py)"
@@ -68,8 +62,17 @@ echo ""
 # Clean any broken dataset cache from previous failed runs
 rm -rf /data/beegfs/home/saifi/.cache/huggingface/datasets/parquet/default-*/*.incomplete 2>/dev/null || true
 
-# Run training through sysroot loader (glibc 2.28 for everything)
-${RUN_PYTHON} scripts/train.py ${CONFIG} \
+# ─── Launch Training ─────────────────────────────────────────────────────────
+# Set LD_LIBRARY_PATH NOW (after all system commands are done).
+# This is inherited by multiprocessing worker subprocesses so they
+# also load sysroot glibc 2.28 libs (fixes librt.so.1 __clock_nanosleep error).
+export LD_LIBRARY_PATH="${SYSROOT}/lib64:${SYSROOT}/usr/lib64:${VENV}/lib:${LD_LIBRARY_PATH:-}"
+
+# Launch through sysroot's ld-linux (main process uses --library-path,
+# spawned workers inherit LD_LIBRARY_PATH — both get glibc 2.28)
+${SYSROOT}/lib64/ld-linux-x86-64.so.2 \
+    --library-path "${SYSROOT}/lib64:${SYSROOT}/usr/lib64:${VENV}/lib" \
+    ${VENV}/bin/python3.11 scripts/train.py ${CONFIG} \
     --exp-name=${EXP_NAME} \
     --overwrite
 
