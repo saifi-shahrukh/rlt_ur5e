@@ -88,9 +88,15 @@ def _merge_params(loaded_params: at.Params, params: at.Params, *, missing_regex:
     flat_loaded = flax.traverse_util.flatten_dict(loaded_params, sep="/")
 
     # First, take all weights that are a subset of the reference weights.
+    # Skip params with shape mismatches (e.g. action_in_proj when action_dim differs from base).
     result = {}
     for k, v in flat_loaded.items():
         if k in flat_ref:
+            ref_shape = flat_ref[k].shape if hasattr(flat_ref[k], 'shape') else None
+            loaded_shape = v.shape if hasattr(v, 'shape') else None
+            if ref_shape is not None and loaded_shape is not None and ref_shape != loaded_shape:
+                # Shape mismatch — skip this param (will be randomly initialized)
+                continue
             result[k] = v.astype(flat_ref[k].dtype) if v.dtype != flat_ref[k].dtype else v
 
     flat_loaded.clear()
