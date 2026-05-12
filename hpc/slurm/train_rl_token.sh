@@ -9,7 +9,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --time=01:00:00
+#SBATCH --time=02:00:00
 #SBATCH --output=/data/beegfs/home/saifi/logs/rl_token_%j.out
 #SBATCH --error=/data/beegfs/home/saifi/logs/rl_token_%j.err
 
