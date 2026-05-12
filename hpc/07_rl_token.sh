@@ -80,7 +80,7 @@ submit_extract() {
     local step="$2"
     local job_id
     job_id=$(VLA_CONFIG="${config}" VLA_STEP="${step}" sbatch --parsable --export=ALL,VLA_CONFIG="${config}",VLA_STEP="${step}" "${SLURM_DIR}/extract_embeddings.sh")
-    echo "  ✓ Extract ${config} → Job ${job_id}"
+    echo "  ✓ Extract ${config} → Job ${job_id}" >&2
     echo "${job_id}"
 }
 
