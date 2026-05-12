@@ -95,7 +95,7 @@ class UR5eRLTEnv(gym.Env):
 
         # Episode tracking
         self.episode_step = 0
-        self.max_episode_chunks = 10  # 10 chunks × 10 steps = 100 steps at 10Hz = 10s
+        self.max_episode_chunks = 30  # 10 chunks × 10 steps = 100 steps at 10Hz = 10s
 
         # State
         self._last_raw_obs = None
