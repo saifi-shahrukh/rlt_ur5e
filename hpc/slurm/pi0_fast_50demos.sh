@@ -1,8 +1,10 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════════════════
 # SLURM: Train π0-FAST LoRA (50 demos peg insertion)
-# Config: pi0_fast_ur5e_peg_insertion_lora | V100 32GB optimized
-# Steps: 5000 (sufficient for LoRA on 50 demos)
+# Config: pi0_fast_ur5e_peg_insertion_lora | V100 32GB
+# Steps: 30,000 (official OpenPI standard for LoRA fine-tuning)
+# LoRA: rank=16 (same as pi0 — standard for HPC training)
+# NOTE: 12hr SLURM limit may not be enough. Use --resume to continue.
 # REQUIRES: Run hpc/cache_fast_tokenizer.sh on headnode first!
 # ═══════════════════════════════════════════════════════════════════════════════
 #SBATCH --job-name=pi0fast_50
@@ -17,10 +19,9 @@
 
 set -euo pipefail
 
-# ─── Config ────────────────���─────────────────────────────────────────────────
+# ─── Config ──────────────────────────────────────────────────────────────────
 OPENPI="/data/beegfs/home/saifi/rlt_ur5e/openpi_ur5e/openpi-ur5e"
 VENV="${OPENPI}/.venv"
-SYSROOT="${VENV}/x86_64-conda-linux-gnu/sysroot"
 CONFIG="pi0_fast_ur5e_peg_insertion_lora"
 EXP_NAME="peg_insertion_50demos"
 
@@ -34,7 +35,6 @@ export HF_TOKEN=$(cat /data/beegfs/home/saifi/.cache/huggingface/token 2>/dev/nu
 export HF_HUB_OFFLINE=1
 export HF_DATASETS_OFFLINE=1
 export HF_LEROBOT_HOME="/data/beegfs/home/saifi/.cache/huggingface/lerobot"
-# transformers offline mode (needed for AutoProcessor.from_pretrained)
 export TRANSFORMERS_OFFLINE=1
 
 # JAX/XLA — optimized for V100 32GB
@@ -61,23 +61,20 @@ echo "  Config:   ${CONFIG}"
 echo "  Exp:      ${EXP_NAME}"
 echo "  Node:     $(hostname)"
 echo "  GPU:      $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -1)"
-echo "  Batch:    8 | Workers: 4 | Steps: 5000"
+echo "  Steps:    30,000 | Batch: 8 | LoRA rank: 16 | Save: every 500"
+echo "  WARNING:  12hr limit. Will need --resume if killed."
 echo "  Start:    $(date)"
 echo "═══════════════════════════════════════════════════════════════"
 nvidia-smi
 echo ""
 
 # ─── Launch Training ─────────────────────────────────────────────────────────
-# π0-FAST: discrete action tokens (lighter than diffusion heads)
-# batch=8: safe memory, FAST has smaller activations
-# workers=4: parallel data loading
+# Config defaults: batch=8, save_interval=500, num_train_steps=30000, rank=16
+# num_workers=8: max parallel data loading (matches cpus-per-task=8)
 ${VENV}/bin/python3.11 scripts/train.py ${CONFIG} \
     --exp-name=${EXP_NAME} \
     --overwrite \
-    --batch-size=8 \
-    --num-workers=4 \
-    --num-train-steps=5000 \
-    --save-interval=1000
+    --num-workers=8
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════"

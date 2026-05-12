@@ -1,8 +1,9 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════════════════
 # SLURM: Train π0 LoRA (50 demos peg insertion)
-# Config: pi0_ur5e_peg_insertion_lora | V100 32GB optimized
-# Steps: 5000 (sufficient for LoRA on 50 demos)
+# Config: pi0_ur5e_peg_insertion_lora | V100 32GB
+# Steps: 30,000 (official OpenPI standard for LoRA fine-tuning)
+# NOTE: 12hr SLURM limit may not be enough. Use --resume to continue.
 # ═══════════════════════════════════════════════════════════════════════════════
 #SBATCH --job-name=pi0_50
 #SBATCH --partition=gpu
@@ -19,7 +20,6 @@ set -euo pipefail
 # ─── Config ──────────────────────────────────────────────────────────────────
 OPENPI="/data/beegfs/home/saifi/rlt_ur5e/openpi_ur5e/openpi-ur5e"
 VENV="${OPENPI}/.venv"
-SYSROOT="${VENV}/x86_64-conda-linux-gnu/sysroot"
 CONFIG="pi0_ur5e_peg_insertion_lora"
 EXP_NAME="peg_insertion_50demos"
 
@@ -58,24 +58,20 @@ echo "  Config:   ${CONFIG}"
 echo "  Exp:      ${EXP_NAME}"
 echo "  Node:     $(hostname)"
 echo "  GPU:      $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader | head -1)"
-echo "  Batch:    8 | Workers: 4 | Steps: 5000"
+echo "  Steps:    30,000 | Batch: 8 | Save: every 500"
+echo "  WARNING:  12hr limit. Will need --resume if killed."
 echo "  Start:    $(date)"
 echo "═══════════════════════════════════════════════════════════════"
 nvidia-smi
 echo ""
 
 # ─── Launch Training ─────────────────────────────────────────────────────────
-# batch=8: safe memory (~8 GiB activations), no rematerialization
-# workers=4: parallel data loading (DT_RPATH provides sysroot libs)
-# 5000 steps: sufficient for LoRA convergence on 50 demos
-# save_interval=1000: checkpoints at 1k, 2k, 3k, 4k, 5k
+# Config defaults: batch=8, save_interval=500, num_train_steps=30000
+# num_workers=8: max parallel data loading (matches cpus-per-task=8)
 ${VENV}/bin/python3.11 scripts/train.py ${CONFIG} \
     --exp-name=${EXP_NAME} \
     --overwrite \
-    --batch-size=8 \
-    --num-workers=4 \
-    --num-train-steps=5000 \
-    --save-interval=1000
+    --num-workers=8
 
 echo ""
 echo "═══════════════════════════════════════════════════════════════"

@@ -1401,8 +1401,8 @@ _CONFIGS = [
     TrainConfig(
         name="pi0_ur5e_peg_insertion_lora",
         model=pi0_config.Pi0Config(
-            paligemma_variant="gemma_2b_lora",    # LoRA on vision-language model (2B params)
-            action_expert_variant="gemma_300m_lora",  # LoRA on action expert (300M params)
+            paligemma_variant="gemma_2b_lora",    # LoRA on VLM (rank=16, alpha=16)
+            action_expert_variant="gemma_300m_lora",  # LoRA on action expert (rank=32, alpha=32)
             action_horizon=30,                    # predict 30 future actions (1 second at 30fps)
         ),
         data=LeRobotUR5DualCamDataConfig(
@@ -1414,14 +1414,14 @@ _CONFIGS = [
             extra_delta_transform=True,           # convert actions to delta (relative) format
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
-        num_train_steps=30_000,                   # total training iterations
+        num_train_steps=30_000,                   # Standard: 30k steps (matches official OpenPI)
         freeze_filter=pi0_config.Pi0Config(       # freeze everything except LoRA weights
             paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora"
         ).get_freeze_filter(),
         ema_decay=None,                           # no exponential moving average
         keep_period=5_000,                        # keep checkpoint every 5k steps permanently
-        save_interval=5_000,                      # save checkpoint every 5k steps
-        batch_size=4,                             # ← reduced for 16GB VRAM (default was 16)
+        save_interval=500,                        # save every 500 steps for resume safety
+        batch_size=8,                             # V100 32GB: batch=8 fits comfortably
         num_workers=4,                            # dataloader workers
     ),
     #
@@ -1441,8 +1441,7 @@ _CONFIGS = [
             action_dim=7,                         # 6 joints + 1 gripper
             action_horizon=30,                    # predict 30 future actions
             max_token_len=180,                    # max action token sequence length
-            paligemma_variant="gemma_2b_lora",    # LoRA on vision-language backbone
-            paligemma_lora_rank=4,                # rank=4 saves ~3.7 GiB vs rank=16
+            paligemma_variant="gemma_2b_lora",    # LoRA on vision-language backbone (rank=16 default)
         ),
         data=LeRobotUR5DualCamDataConfig(
             repo_id="saifi/ur5e-peg-insertion-50demos-v2",
@@ -1453,16 +1452,14 @@ _CONFIGS = [
             extra_delta_transform=True,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_fast_base/params"),
-        num_train_steps=30_000,
+        num_train_steps=30_000,                   # Standard: 30k steps (matches official OpenPI)
         freeze_filter=pi0_fast.Pi0FASTConfig(
             action_dim=7, action_horizon=30, max_token_len=180, paligemma_variant="gemma_2b_lora",
-            paligemma_lora_rank=4,
         ).get_freeze_filter(),
         ema_decay=None,
         keep_period=5_000,
-        save_interval=5_000,
-        batch_size=1,                             # RTX 5070 Ti 16GB: batch=1 is minimum
-        grad_accumulation_steps=1,                # Set to 1 to avoid OOM; try 2-4 if memory allows
+        save_interval=500,                        # Save every 500 steps for resume safety
+        batch_size=8,                             # V100 32GB: batch=8 fits comfortably
         num_workers=4,
     ),
     #
@@ -1476,8 +1473,8 @@ _CONFIGS = [
         name="pi05_ur5e_peg_insertion_lora",
         model=pi0_config.Pi0Config(
             pi05=True,                            # enable π0.5 architecture
-            paligemma_variant="gemma_2b_lora",    # LoRA on VLM
-            action_expert_variant="gemma_300m_lora",  # LoRA on action expert
+            paligemma_variant="gemma_2b_lora",    # LoRA on VLM (rank=16, alpha=16)
+            action_expert_variant="gemma_300m_lora",  # LoRA on action expert (rank=32, alpha=32)
             action_horizon=30,
         ),
         data=LeRobotUR5DualCamDataConfig(
@@ -1489,14 +1486,15 @@ _CONFIGS = [
             extra_delta_transform=True,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
-        num_train_steps=30_000,
+        num_train_steps=30_000,                   # Standard: 30k steps (matches official OpenPI)
         freeze_filter=pi0_config.Pi0Config(
             pi05=True, paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora"
         ).get_freeze_filter(),
         ema_decay=None,
         keep_period=5_000,
-        save_interval=5_000,
-        batch_size=16,                            # V100 32GB can handle batch=16
+        save_interval=500,                        # Save every 500 steps for resume safety
+        batch_size=4,                             # V100 32GB: batch=4 + grad_accum=2 (OOM at batch=8)
+        grad_accumulation_steps=2,                # Effective batch=8
         num_workers=4,
     ),
     #
