@@ -148,38 +148,58 @@ class UR5eRLTEnv(gym.Env):
 
         try:
             # Extract images from SERL observation
+            # SERL returns: {"images": {"wrist_1": (H,W,3), "overview": (H,W,3)}}
+            # OpenPI expects: exterior_image_1_left, wrist_image_left, wrist_image_right
+            # We have 2 cameras → duplicate wrist for left+right (same as training data)
             images = {}
             if "images" in raw_obs:
                 img_dict = raw_obs["images"]
-                # Map SERL camera names to OpenPI names
-                key_mapping = {
-                    "wrist_1": "wrist_image_left",
-                    "wrist_2": "wrist_image_right",
-                    "overview": "exterior_image_1_left",
-                }
-                for serl_key, openpi_key in key_mapping.items():
-                    if serl_key in img_dict:
-                        img = img_dict[serl_key]
-                        if img.ndim == 4:  # (1, H, W, C) stacked
-                            img = img[0]
-                        images[openpi_key] = img
 
-            # Extract joint state
+                # Kinect overview → exterior_image_1_left
+                if "overview" in img_dict:
+                    img = img_dict["overview"]
+                    if img.ndim == 4:
+                        img = img[0]
+                    images["exterior_image_1_left"] = img
+
+                # RealSense wrist → both wrist_image_left AND wrist_image_right
+                wrist_key = "wrist_1" if "wrist_1" in img_dict else "wrist_2"
+                if wrist_key in img_dict:
+                    img = img_dict[wrist_key]
+                    if img.ndim == 4:
+                        img = img[0]
+                    images["wrist_image_left"] = img
+                    images["wrist_image_right"] = img.copy()  # duplicate for right
+
+            # Extract joint state for VLA query
+            # The VLA was trained on joint angles (from controller.get_state()["Q"])
+            # The SERL obs only has tcp_pose (Cartesian), so we read joints directly
             joints = self._current_joints
             gripper = self._current_gripper
 
-            if "state" in raw_obs:
+            # Try to get joint angles from the underlying SERL env's controller
+            if self.serl_env is not None and not self.fake_env:
+                try:
+                    # Navigate through wrappers to get the base env with controller
+                    base_env = self.serl_env
+                    while hasattr(base_env, 'env'):
+                        base_env = base_env.env
+                    if hasattr(base_env, 'controller'):
+                        ctrl_state = base_env.controller.get_state()
+                        joints = ctrl_state["Q"][:6].astype(np.float32)
+                        gripper_raw = ctrl_state["gripper"][0]  # normalized 0-1
+                        # Convert to training format: 247/255 = 0.9686 when closed
+                        gripper = 0.9686274528503418  # hardcoded closed (training value)
+                except Exception as e:
+                    pass  # Fall back to cached joints
+
+            # Fallback: check raw_obs state dict
+            if np.all(joints == 0) and "state" in raw_obs:
                 state = raw_obs["state"]
                 if isinstance(state, np.ndarray) and len(state) >= 6:
-                    # First 6 values are joint angles
                     joints = state[:6].astype(np.float32)
-                elif isinstance(state, dict):
-                    if "joint_position" in state:
-                        joints = np.array(state["joint_position"][:6], dtype=np.float32)
-                    elif "tcp_pose" in state:
-                        # tcp_pose is (6,) [x,y,z,rx,ry,rz] - not joints!
-                        # We need actual joint positions
-                        pass
+                elif isinstance(state, dict) and "joint_position" in state:
+                    joints = np.array(state["joint_position"][:6], dtype=np.float32)
 
             # Call VLA server via websocket
             actions = self.vla_client.get_actions(
@@ -224,7 +244,21 @@ class UR5eRLTEnv(gym.Env):
         return np.zeros(self.proprio_dim, dtype=np.float32)
 
     def _update_joint_state(self, raw_obs: dict):
-        """Update cached joint state from observation (for VLA queries)."""
+        """Update cached joint state from controller (for VLA queries)."""
+        # Best source: read joint angles directly from controller
+        if self.serl_env is not None and not self.fake_env:
+            try:
+                base_env = self.serl_env
+                while hasattr(base_env, 'env'):
+                    base_env = base_env.env
+                if hasattr(base_env, 'controller'):
+                    ctrl_state = base_env.controller.get_state()
+                    self._current_joints = ctrl_state["Q"][:6].astype(np.float32)
+                    return
+            except Exception:
+                pass
+
+        # Fallback: try raw_obs
         if raw_obs is None:
             return
         if "state" in raw_obs:
