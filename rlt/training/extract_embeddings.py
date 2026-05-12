@@ -145,8 +145,16 @@ def main():
         inputs = jax.tree.map(lambda x: jnp.asarray(x)[np.newaxis, ...], inputs)
         observation = _model.Observation.from_dict(inputs)
 
-        # Get prefix embeddings
-        emb, input_mask, ar_mask = model.embed_inputs(observation)
+        # Get prefix embeddings (different method names per model)
+        if hasattr(model, 'embed_prefix'):
+            # Pi0 and Pi0.5 use embed_prefix
+            emb, input_mask, ar_mask = model.embed_prefix(observation)
+        elif hasattr(model, 'embed_inputs'):
+            # Pi0-FAST uses embed_inputs
+            emb, input_mask, ar_mask = model.embed_inputs(observation)
+        else:
+            raise AttributeError(
+                f"Model {type(model).__name__} has neither embed_prefix nor embed_inputs")
         # emb shape: (1, N_prefix, 2048)
 
         # Convert to numpy and store
