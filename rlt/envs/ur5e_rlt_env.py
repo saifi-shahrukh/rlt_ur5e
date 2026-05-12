@@ -133,6 +133,8 @@ class UR5eRLTEnv(gym.Env):
             print(f"[UR5eRLTEnv] Falling back to dummy environment")
             return None
 
+    _vla_debug_printed = False  # class-level flag for one-time debug
+
     def _get_vla_reference(self, raw_obs: dict) -> np.ndarray:
         """Call VLA server to get reference actions.
 
@@ -148,28 +150,61 @@ class UR5eRLTEnv(gym.Env):
 
         try:
             # Extract images from SERL observation
-            # SERL returns: {"images": {"wrist_1": (H,W,3), "overview": (H,W,3)}}
+            # After SERLObsWrapper, obs format is:
+            #   {"state": flat_array, "wrist_1": (H,W,3), "overview": (H,W,3)}
+            # OR before SERLObsWrapper:
+            #   {"images": {"wrist_1": ..., "overview": ...}, "state": {...}}
             # OpenPI expects: exterior_image_1_left, wrist_image_left, wrist_image_right
             # We have 2 cameras → duplicate wrist for left+right (same as training data)
             images = {}
-            if "images" in raw_obs:
-                img_dict = raw_obs["images"]
 
-                # Kinect overview → exterior_image_1_left
+            # Debug: print obs keys once to diagnose format
+            if not UR5eRLTEnv._vla_debug_printed:
+                obs_keys = list(raw_obs.keys()) if isinstance(raw_obs, dict) else type(raw_obs)
+                print(f"[UR5eRLTEnv DEBUG] raw_obs keys: {obs_keys}")
+                for k, v in raw_obs.items():
+                    if isinstance(v, np.ndarray):
+                        print(f"  {k}: ndarray shape={v.shape}, dtype={v.dtype}")
+                    elif isinstance(v, dict):
+                        print(f"  {k}: dict with keys={list(v.keys())}")
+                    else:
+                        print(f"  {k}: {type(v).__name__}")
+                UR5eRLTEnv._vla_debug_printed = True
+
+            # Case 1: After SERLObsWrapper — images at top level
+            if "wrist_1" in raw_obs or "overview" in raw_obs:
+                if "overview" in raw_obs:
+                    img = raw_obs["overview"]
+                    if isinstance(img, np.ndarray):
+                        if img.ndim == 4:
+                            img = img[0]
+                        images["exterior_image_1_left"] = img
+
+                wrist_key = "wrist_1" if "wrist_1" in raw_obs else "wrist_2"
+                if wrist_key in raw_obs:
+                    img = raw_obs[wrist_key]
+                    if isinstance(img, np.ndarray):
+                        if img.ndim == 4:
+                            img = img[0]
+                        images["wrist_image_left"] = img
+                        images["wrist_image_right"] = img.copy()
+
+            # Case 2: Before SERLObsWrapper — images nested under "images" key
+            elif "images" in raw_obs:
+                img_dict = raw_obs["images"]
                 if "overview" in img_dict:
                     img = img_dict["overview"]
                     if img.ndim == 4:
                         img = img[0]
                     images["exterior_image_1_left"] = img
 
-                # RealSense wrist → both wrist_image_left AND wrist_image_right
                 wrist_key = "wrist_1" if "wrist_1" in img_dict else "wrist_2"
                 if wrist_key in img_dict:
                     img = img_dict[wrist_key]
                     if img.ndim == 4:
                         img = img[0]
                     images["wrist_image_left"] = img
-                    images["wrist_image_right"] = img.copy()  # duplicate for right
+                    images["wrist_image_right"] = img.copy()
 
             # Extract joint state for VLA query
             # The VLA was trained on joint angles (from controller.get_state()["Q"])
