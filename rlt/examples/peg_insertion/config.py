@@ -145,11 +145,14 @@ class RLTConfig:
     ])
 
     # ══════════════════════════════════════════════════════════════════════
-    # Safety
+    # Safety / Action Scaling
     # ══════════════════════════════════════════════════════════════════════
-    # Max residual magnitude per step (clips RL output)
-    max_residual_pos: float = 0.003   # 3mm max correction per step
-    max_residual_rot: float = 0.02    # ~1° max rotation correction per step
+    # The SERL env action space is [-1, 1] for 6D (xyz + rotation)
+    # ACTION_SCALE in SERL: pos=0.01 (10mm/step), rot=0.05 (2.9°/step)
+    # Since VLA is broken (outputs near-zero), SAC residual IS the full action.
+    # Scale to match SERL's native action range:
+    max_residual_pos: float = 1.0     # maps to full SERL pos range (±10mm/step)
+    max_residual_rot: float = 1.0     # maps to full SERL rot range (±2.9°/step)
 
     # ══════════════════════════════════════════════════════════════════════
     # agentlace Communication (same as ur5e_hil_serl)

@@ -136,7 +136,16 @@ class UR5eRLTEnv(gym.Env):
     _vla_debug_printed = False  # class-level flag for one-time debug
 
     def _get_vla_reference(self, raw_obs: dict) -> np.ndarray:
-        """Call VLA server to get reference actions.
+        """Get reference actions for the RL agent.
+
+        IMPORTANT: The SERL env uses Cartesian delta control (6D: xyz + rotation)
+        while the VLA outputs joint angle deltas. These are incompatible.
+
+        Current behavior:
+        - If VLA is connected: query it but output is near-zero (broken rank=4 model)
+        - In both cases: return zeros → SAC must learn the full action from scratch
+        - When a working VLA is available (π0 rank=16 from HPC), we'll add
+          joint→Cartesian conversion here
 
         Args:
             raw_obs: SERL observation dict with images and state
@@ -356,7 +365,13 @@ class UR5eRLTEnv(gym.Env):
         residual_scaled[:, 3:6] = residual_chunk[:, 3:6] * self.config.max_residual_rot
 
         # Combine: final = VLA reference + residual
+        # With max_residual=1.0 and ref=0, this is just the raw SAC action in [-1,1]
+        # which maps directly to the SERL env's action space
         final_chunk = self._current_ref_chunk + residual_scaled
+
+        # Debug: log first action of first chunk in episode
+        if self.episode_step == 0 and not UR5eRLTEnv._vla_debug_printed:
+            print(f"[UR5eRLTEnv] Action sample: {final_chunk[0][:3]} (xyz) {final_chunk[0][3:]} (rot)")
 
         # Execute C steps open-loop
         total_reward = 0.0
