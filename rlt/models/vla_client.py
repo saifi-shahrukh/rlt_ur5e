@@ -127,11 +127,28 @@ class VLAClient:
             return actions[:self.action_horizon]
 
         except Exception as e:
-            print(f"[VLAClient] Inference failed: {e}")
+            # Log only first failure (avoid spam)
+            if not hasattr(self, '_error_logged'):
+                print(f"[VLAClient] Inference failed: {e}")
+                print(f"[VLAClient] Subsequent failures will be silent. Returning zero actions.")
+                self._error_logged = True
+            # Try to reconnect for next call
+            self._try_reconnect()
+            # Return current state (no movement)
             action = np.zeros((self.action_horizon, self.action_dim))
             action[:, :6] = joint_position
             action[:, 6] = gripper_position
             return action
+
+    def _try_reconnect(self):
+        """Attempt to reconnect to the VLA server."""
+        try:
+            host = self.server_url.replace("ws://", "").split(":")[0]
+            port = int(self.server_url.split(":")[-1])
+            self._client = WebsocketClientPolicy(host=host, port=port)
+            self._connected = True
+        except Exception:
+            self._connected = False
 
     def is_connected(self) -> bool:
         return self._connected

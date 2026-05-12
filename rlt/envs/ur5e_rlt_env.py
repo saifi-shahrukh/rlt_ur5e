@@ -252,15 +252,15 @@ class UR5eRLTEnv(gym.Env):
                 images=images,
             )
             # actions: (action_horizon, 7) — absolute joint targets from server
-            # The server already applies AbsoluteActions transform
-
-            # Convert absolute targets to delta (relative to current joints)
-            # The robot controller expects delta tcp, not absolute joints
-            # But the VLA outputs absolute joint positions after AbsoluteActions
-            # We need: delta = target - current
-            ref_deltas = actions[:self.chunk_size, :self.action_dim] - joints[:self.action_dim]
-
-            return ref_deltas.astype(np.float32)
+            # The server applies AbsoluteActions → output is absolute joint positions
+            #
+            # IMPORTANT: The VLA outputs JOINT-SPACE deltas, but the SERL env
+            # expects CARTESIAN deltas. These are incompatible action spaces.
+            # For now, we return zeros as the reference (VLA is broken anyway).
+            # When HPC produces a working VLA, we'll add J(q)·Δq conversion here.
+            #
+            # The SAC agent learns the full Cartesian action from scratch.
+            return np.zeros((self.chunk_size, self.action_dim), dtype=np.float32)
 
         except Exception as e:
             print(f"[UR5eRLTEnv] VLA inference failed: {e}")
