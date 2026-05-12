@@ -28,9 +28,12 @@ EMBEDDINGS_FILE="${OUTPUT_DIR}/embeddings_${VLA_CONFIG}_step${VLA_STEP}.pt"
 SAVE_PATH="${OUTPUT_DIR}/${VLA_CONFIG}_rl_token.pt"
 
 # Training hyperparameters
+# NOTE: batch=4 required for V100 32GB (968-token sequences × 2048 embed_dim)
+# Grad accumulation of 8 gives effective batch of 32
 TOKEN_DIM="${TOKEN_DIM:-512}"
 STEPS="${STEPS:-5000}"
-BATCH_SIZE="${BATCH_SIZE:-32}"
+BATCH_SIZE="${BATCH_SIZE:-4}"
+GRAD_ACCUM="${GRAD_ACCUM:-8}"
 LR="${LR:-3e-4}"
 
 # ─── Environment ─────────────────────────────────────────────────────────────
@@ -69,12 +72,16 @@ echo "  ✓ Embeddings found: $(du -h ${EMBEDDINGS_FILE} | cut -f1)"
 echo ""
 
 # ─── Train ───────────────────────────────────────────────────────────────────
-${VENV}/bin/python3.11 -m rlt.training.train_rl_token \
+# PYTORCH_CUDA_ALLOC_CONF helps with memory fragmentation
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+PYTHONUNBUFFERED=1 ${VENV}/bin/python3.11 -m rlt.training.train_rl_token \
     --cache "${EMBEDDINGS_FILE}" \
     --save_path "${SAVE_PATH}" \
     --token_dim "${TOKEN_DIM}" \
     --steps "${STEPS}" \
     --batch_size "${BATCH_SIZE}" \
+    --grad_accum "${GRAD_ACCUM}" \
     --lr "${LR}" \
     --device cuda
 

@@ -314,6 +314,7 @@ def train(args):
     best_loss = float("inf")
     start_time = time.time()
     loss_history = []
+    optimizer.zero_grad()  # Initialize gradients
 
     for step in range(args.steps):
         # Get batch (cycle through data)
@@ -327,13 +328,20 @@ def train(args):
 
         # Forward pass
         loss, z_rl = model.compute_loss(batch)
+        loss = loss / args.grad_accum  # Scale loss for accumulation
 
-        # Backward pass
-        optimizer.zero_grad()
+        # Backward pass (accumulate gradients)
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        optimizer.step()
-        scheduler.step()
+
+        # Step optimizer every grad_accum steps
+        if (step + 1) % args.grad_accum == 0 or step == args.steps - 1:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+            scheduler.step()
+            optimizer.zero_grad()
+
+        # Unscale loss for logging
+        loss = loss * args.grad_accum
 
         loss_val = loss.item()
         loss_history.append(loss_val)
@@ -436,7 +444,9 @@ def main():
     parser.add_argument("--steps", type=int, default=5000,
                         help="Total training steps")
     parser.add_argument("--batch_size", type=int, default=32,
-                        help="Batch size")
+                        help="Batch size (per GPU step)")
+    parser.add_argument("--grad_accum", type=int, default=1,
+                        help="Gradient accumulation steps (effective batch = batch_size * grad_accum)")
     parser.add_argument("--lr", type=float, default=3e-4,
                         help="Learning rate")
     parser.add_argument("--stride", type=int, default=5,
