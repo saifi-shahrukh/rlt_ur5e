@@ -44,6 +44,9 @@ class Pi0Config(_model.BaseModelConfig):
     pi05: bool = False
     # This config option is not used directly by the model, but it is read by the ModelTransformFactory.
     discrete_state_input: bool = None  # type: ignore
+    # Number of image inputs. Default=3 (base + left_wrist + right_wrist).
+    # Set to 2 for dual-camera setups (base + left_wrist only) to save ~25% compute.
+    num_images: int = 3
 
     @property
     def siglip_lora_config(self) -> lora.LoRAConfig | None:
@@ -78,18 +81,24 @@ class Pi0Config(_model.BaseModelConfig):
         image_spec = jax.ShapeDtypeStruct([batch_size, *_model.IMAGE_RESOLUTION, 3], jnp.float32)
         image_mask_spec = jax.ShapeDtypeStruct([batch_size], jnp.bool_)
 
+        # Build image dict based on num_images setting
+        if self.num_images == 2:
+            images_dict = {
+                "base_0_rgb": image_spec,
+                "left_wrist_0_rgb": image_spec,
+            }
+        else:
+            images_dict = {
+                "base_0_rgb": image_spec,
+                "left_wrist_0_rgb": image_spec,
+                "right_wrist_0_rgb": image_spec,
+            }
+        image_masks_dict = {k: image_mask_spec for k in images_dict}
+
         with at.disable_typechecking():
             observation_spec = _model.Observation(
-                images={
-                    "base_0_rgb": image_spec,
-                    "left_wrist_0_rgb": image_spec,
-                    "right_wrist_0_rgb": image_spec,
-                },
-                image_masks={
-                    "base_0_rgb": image_mask_spec,
-                    "left_wrist_0_rgb": image_mask_spec,
-                    "right_wrist_0_rgb": image_mask_spec,
-                },
+                images=images_dict,
+                image_masks=image_masks_dict,
                 state=jax.ShapeDtypeStruct([batch_size, self.action_dim], jnp.float32),
                 tokenized_prompt=jax.ShapeDtypeStruct([batch_size, self.max_token_len], jnp.int32),
                 tokenized_prompt_mask=jax.ShapeDtypeStruct([batch_size, self.max_token_len], bool),

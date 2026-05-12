@@ -591,6 +591,79 @@ class LeRobotUR5DualCamDataConfig(DataConfigFactory):
 
 
 @dataclasses.dataclass(frozen=True)
+class LeRobotUR5DualCamV2DataConfig(DataConfigFactory):
+    """
+    Config for dual-camera UR5e setup — V2 (2 images only, no duplicate).
+
+    Improvement over DualCamDataConfig:
+      - Only 2 images passed to model (overhead + wrist)
+      - NO duplicate wrist image as "right_wrist"
+      - Saves ~25-30% compute (256 fewer SigLIP tokens per sample)
+      - Faster training AND inference
+
+    Hardware:
+      - UR5e + Robotiq Hand-E
+      - Intel RealSense D435 wrist camera
+      - Kinect v2 Xbox overhead camera
+
+    Camera mapping (2 cameras → 2 model inputs):
+      - observation/exterior_image_1_left -> base_0_rgb (overhead)
+      - observation/wrist_image_left -> left_wrist_0_rgb (pi0/pi0.5) or wrist_0_rgb (pi0-FAST)
+
+    State: 6 joint positions + 1 gripper = 7D
+    Actions: 6 joint deltas + 1 gripper = 7D (with delta transform)
+    """
+
+    extra_delta_transform: bool = False
+    action_sequence_keys: Sequence[str] = ("action",)
+
+    @override
+    def create(self, assets_dirs: pathlib.Path, model_config: _model.BaseModelConfig) -> DataConfig:
+        repack_transform = _transforms.Group(
+            inputs=[
+                _transforms.RepackTransform(
+                    {
+                        "observation/exterior_image_1_left": (
+                            "observation.images.overview_cam",
+                        ),
+                        "observation/wrist_image_left": (
+                            "observation.images.wrist_cam",
+                        ),
+                        "observation/joint_position": (
+                            "observation.state",
+                            "observation.joint_position",
+                        ),
+                        "actions": ("action", "actions"),
+                        "prompt": ("prompt", "task"),
+                    }
+                )
+            ]
+        )
+
+        data_transforms = _transforms.Group(
+            inputs=[ur5e_policy.UR5EDualCamInputs(model_type=model_config.model_type)],
+            outputs=[ur5e_policy.UR5EOutputs()],
+        )
+
+        if self.extra_delta_transform:
+            delta_action_mask = _transforms.make_bool_mask(6, -1)
+            data_transforms = data_transforms.push(
+                inputs=[_transforms.DeltaActions(delta_action_mask)],
+                outputs=[_transforms.AbsoluteActions(delta_action_mask)],
+            )
+
+        model_transforms = ModelTransformFactory()(model_config)
+
+        return dataclasses.replace(
+            self.create_base_config(assets_dirs, model_config),
+            repack_transforms=repack_transform,
+            data_transforms=data_transforms,
+            model_transforms=model_transforms,
+            action_sequence_keys=self.action_sequence_keys,
+        )
+
+
+@dataclasses.dataclass(frozen=True)
 class RLDSDroidDataConfig(DataConfigFactory):
     """
     Config for training on DROID, using RLDS data format (for efficient training on larger datasets).
@@ -1499,6 +1572,106 @@ _CONFIGS = [
         batch_size=4,                             # V100 32GB: batch=4 + grad_accum=2 (OOM at batch=8)
         grad_accumulation_steps=2,                # Effective batch=8
         num_workers=4,
+    ),
+    #
+    # ═══════════════════════════════════════════════════════════════════════════
+    # V2 CONFIGS: 2-camera setup (overhead + wrist only, no duplicate)
+    # ~25-30% faster training & inference vs v1 (3-image configs above)
+    # ═══════════════════════════════════════════════════════════════════════════
+    #
+    # Config 4: π0 v2 — 2 cameras, rank=16, 30k steps
+    # ─────────────────────────────────────────────────────────────────────────
+    TrainConfig(
+        name="pi0_ur5e_peg_insertion_v2_lora",
+        model=pi0_config.Pi0Config(
+            action_dim=7,
+            action_horizon=30,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+            num_images=2,                         # 2-camera: overhead + wrist
+        ),
+        data=LeRobotUR5DualCamV2DataConfig(
+            repo_id="saifi/ur5e-peg-insertion-50demos-v2",
+            base_config=DataConfig(
+                prompt_from_task=True,
+            ),
+            assets=AssetsConfig(asset_id="saifi/ur5e-peg-insertion-50demos-v2"),
+            extra_delta_transform=True,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
+        num_train_steps=30_000,
+        freeze_filter=pi0_config.Pi0Config(
+            paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora"
+        ).get_freeze_filter(),
+        ema_decay=None,
+        keep_period=5_000,
+        save_interval=500,
+        batch_size=8,                             # V100 32GB: fits easily with 2 images
+        num_workers=8,
+    ),
+    #
+    # Config 5: π0-FAST v2 — 2 cameras, rank=16, 30k steps
+    # ─────────────────────────────────────────────────────────────────────────
+    TrainConfig(
+        name="pi0_fast_ur5e_peg_insertion_v2_lora",
+        model=pi0_fast.Pi0FASTConfig(
+            action_dim=7,
+            action_horizon=30,
+            max_token_len=180,
+            paligemma_variant="gemma_2b_lora",    # rank=16 (default)
+            num_images=2,                         # 2-camera: overhead + wrist
+        ),
+        data=LeRobotUR5DualCamV2DataConfig(
+            repo_id="saifi/ur5e-peg-insertion-50demos-v2",
+            base_config=DataConfig(
+                prompt_from_task=True,
+            ),
+            assets=AssetsConfig(asset_id="saifi/ur5e-peg-insertion-50demos-v2"),
+            extra_delta_transform=True,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_fast_base/params"),
+        num_train_steps=30_000,
+        freeze_filter=pi0_fast.Pi0FASTConfig(
+            action_dim=7, action_horizon=30, max_token_len=180, paligemma_variant="gemma_2b_lora",
+        ).get_freeze_filter(),
+        ema_decay=None,
+        keep_period=5_000,
+        save_interval=500,
+        batch_size=8,                             # V100 32GB: fits easily with 2 images
+        num_workers=8,
+    ),
+    #
+    # Config 6: π0.5 v2 — 2 cameras, rank=16/32, 30k steps
+    # ─────────────────────────────────────────────────────────────────────────
+    TrainConfig(
+        name="pi05_ur5e_peg_insertion_v2_lora",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            action_dim=7,
+            action_horizon=30,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+            num_images=2,                         # 2-camera: overhead + wrist
+        ),
+        data=LeRobotUR5DualCamV2DataConfig(
+            repo_id="saifi/ur5e-peg-insertion-50demos-v2",
+            base_config=DataConfig(
+                prompt_from_task=True,
+            ),
+            assets=AssetsConfig(asset_id="saifi/ur5e-peg-insertion-50demos-v2"),
+            extra_delta_transform=True,
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        num_train_steps=30_000,
+        freeze_filter=pi0_config.Pi0Config(
+            pi05=True, paligemma_variant="gemma_2b_lora", action_expert_variant="gemma_300m_lora"
+        ).get_freeze_filter(),
+        ema_decay=None,
+        keep_period=5_000,
+        save_interval=500,
+        batch_size=6,                             # V100 32GB: 2 images allows batch=6 (was 4 with 3 images)
+        grad_accumulation_steps=2,                # Effective batch=12
+        num_workers=8,
     ),
     #
     # UR5 zero-shot
