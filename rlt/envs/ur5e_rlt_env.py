@@ -30,6 +30,8 @@ from typing import Optional
 import gymnasium as gym
 import numpy as np
 
+from rlt.utils.ur5e_kinematics import UR5eKinematics
+
 
 class UR5eRLTEnv(gym.Env):
     """RLT environment wrapping the existing SERL UR5e setup.
@@ -102,9 +104,12 @@ class UR5eRLTEnv(gym.Env):
         self._current_ref_chunk = np.zeros(
             (self.chunk_size, self.action_dim), dtype=np.float32
         )
-        # Track joint state for VLA queries
+        # Track joint state for VLA queries and Jacobian computation
         self._current_joints = np.zeros(6, dtype=np.float32)
         self._current_gripper = 0.9686  # Default closed
+
+        # Kinematics: converts joint deltas → Cartesian deltas for SERL env
+        self._kinematics = UR5eKinematics(mode="dh")
 
     def _create_serl_env(self, fake_env: bool):
         """Create the standard SERL peg insertion environment.
@@ -356,22 +361,35 @@ class UR5eRLTEnv(gym.Env):
             truncated: whether max steps reached
             info: additional info
         """
-        # Reshape residual
+        # Reshape residual — in JOINT SPACE (matching VLA output)
+        # residual is in [-1, 1], representing scaled joint angle deltas
         residual_chunk = residual_flat.reshape(self.chunk_size, self.action_dim)
 
-        # Scale residual by safety limits
-        residual_scaled = np.zeros_like(residual_chunk)
-        residual_scaled[:, :3] = residual_chunk[:, :3] * self.config.max_residual_pos
-        residual_scaled[:, 3:6] = residual_chunk[:, 3:6] * self.config.max_residual_rot
+        # Scale residual to actual joint angle deltas
+        # VLA q99 range: max ~0.048 rad per step. Use max_residual as scale factor.
+        # max_residual_pos here represents max joint delta in radians
+        joint_delta_scale = self.config.max_residual_pos  # rad
+        residual_joint = residual_chunk * joint_delta_scale  # (C, 6) in radians
 
-        # Combine: final = VLA reference + residual
-        # With max_residual=1.0 and ref=0, this is just the raw SAC action in [-1,1]
-        # which maps directly to the SERL env's action space
-        final_chunk = self._current_ref_chunk + residual_scaled
+        # Combine: VLA reference (joint delta) + SAC residual (joint delta)
+        joint_chunk = self._current_ref_chunk + residual_joint  # still in joint space
+
+        # Convert joint-space deltas → Cartesian-space deltas for SERL env
+        # Uses Jacobian: dx = J(q) · dq
+        q = self._current_joints.copy()
+        final_chunk = np.zeros_like(joint_chunk)
+        for i in range(self.chunk_size):
+            serl_action = self._kinematics.joint_delta_to_serl_action(joint_chunk[i], q)
+            final_chunk[i] = serl_action
+            # Update q for next step in chunk (approximate: q += dq)
+            q = q + joint_chunk[i]
 
         # Debug: log first action of first chunk in episode
         if self.episode_step == 0 and not UR5eRLTEnv._vla_debug_printed:
-            print(f"[UR5eRLTEnv] Action sample: {final_chunk[0][:3]} (xyz) {final_chunk[0][3:]} (rot)")
+            print(f"[UR5eRLTEnv] Joint delta: {joint_chunk[0]} rad")
+            print(f"[UR5eRLTEnv] SERL action: {final_chunk[0]} (Cartesian, [-1,1])")
+            dx = self._kinematics.joint_to_cartesian(joint_chunk[0], self._current_joints)
+            print(f"[UR5eRLTEnv] Cartesian motion: pos=[{dx[0]*1000:.2f},{dx[1]*1000:.2f},{dx[2]*1000:.2f}]mm")
 
         # Execute C steps open-loop
         total_reward = 0.0
@@ -415,7 +433,7 @@ class UR5eRLTEnv(gym.Env):
         obs = self._build_obs()
 
         # Add RLT-specific info
-        info["residual_norm"] = float(np.linalg.norm(residual_scaled))
+        info["residual_norm"] = float(np.linalg.norm(joint_chunk))
         info["ref_norm"] = float(np.linalg.norm(self._current_ref_chunk))
         info["chunk_steps_executed"] = min(i + 1, self.chunk_size)
 

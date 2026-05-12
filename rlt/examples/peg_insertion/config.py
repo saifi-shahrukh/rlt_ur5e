@@ -145,14 +145,14 @@ class RLTConfig:
     ])
 
     # ══════════════════════════════════════════════════════════════════════
-    # Safety / Action Scaling
+    # Safety / Action Scaling (JOINT SPACE)
     # ══════════════════════════════════════════════════════════════════════
-    # The SERL env action space is [-1, 1] for 6D (xyz + rotation)
-    # ACTION_SCALE in SERL: pos=0.01 (10mm/step), rot=0.05 (2.9°/step)
-    # Since VLA is broken (outputs near-zero), SAC residual IS the full action.
-    # Scale to match SERL's native action range:
-    max_residual_pos: float = 1.0     # maps to full SERL pos range (±10mm/step)
-    max_residual_rot: float = 1.0     # maps to full SERL rot range (±2.9°/step)
+    # The SAC actor outputs in [-1, 1] representing joint angle deltas.
+    # These get scaled by max_residual_pos and converted to Cartesian via Jacobian.
+    # VLA training data stats: q99 max joint delta = 0.048 rad/step
+    # We use slightly larger range for exploration:
+    max_residual_pos: float = 0.05    # max joint delta in radians (~2.9°/step)
+    max_residual_rot: float = 0.05    # same scale for all joints (not used separately)
 
     # ══════════════════════════════════════════════════════════════════════
     # agentlace Communication (same as ur5e_hil_serl)
