@@ -1441,7 +1441,9 @@ _CONFIGS = [
             action_dim=7,                         # 6 joints + 1 gripper
             action_horizon=30,                    # predict 30 future actions
             max_token_len=180,                    # max action token sequence length
-            paligemma_variant="gemma_2b_lora",    # LoRA on vision-language backbone (rank=16 default)
+            paligemma_variant="gemma_2b_lora",    # LoRA on vision-language backbone
+            paligemma_lora_rank=4,                # rank=4: matches existing checkpoint (step 4999)
+            # NOTE: For FUTURE tasks, use rank=16 (remove this override). See docs/NEW_TASK_GUIDE.md
         ),
         data=LeRobotUR5DualCamDataConfig(
             repo_id="saifi/ur5e-peg-insertion-50demos-v2",
@@ -1455,6 +1457,7 @@ _CONFIGS = [
         num_train_steps=30_000,                   # Standard: 30k steps (matches official OpenPI)
         freeze_filter=pi0_fast.Pi0FASTConfig(
             action_dim=7, action_horizon=30, max_token_len=180, paligemma_variant="gemma_2b_lora",
+            paligemma_lora_rank=4,
         ).get_freeze_filter(),
         ema_decay=None,
         keep_period=5_000,
