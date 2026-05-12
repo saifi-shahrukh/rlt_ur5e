@@ -1,0 +1,4 @@
+mode,success_rate,successes,total,mean_episode_length
+VLA-only,0.1000,1,10,10.0
+VLA+RLT,0.1000,1,10,10.0
+SERL,0.0000,0,10,0.0

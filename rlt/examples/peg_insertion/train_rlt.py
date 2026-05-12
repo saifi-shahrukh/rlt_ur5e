@@ -34,6 +34,9 @@ from pathlib import Path
 
 import numpy as np
 
+# Force JAX to CPU so SAC doesn't compete with VLA server for GPU
+os.environ.setdefault("JAX_PLATFORMS", "cpu")
+
 # Add paths
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
@@ -42,24 +45,41 @@ from rlt.agents.rlt_buffer import RLTBuffer
 from rlt.envs.ur5e_rlt_env import UR5eRLTEnv
 
 
-def load_vla_hook(config: RLTConfig, device: str = "cuda"):
-    """Load the VLA model with forward hook."""
+def load_vla_client(config: RLTConfig):
+    """Create VLA WebSocket client that connects to the running VLA server.
+    
+    The VLA server runs separately (in openpi venv, Python 3.11):
+        cd openpi_ur5e/openpi-ur5e
+        .venv/bin/python scripts/serve_policy.py --port 8000 ...
+    
+    This client connects via websocket — no need for JAX/OpenPI deps here.
+    """
+    from rlt.models.vla_client import VLAClient
+    
     try:
-        from rlt.models.pi05_hook import Pi05Hook
-        hook = Pi05Hook(
-            checkpoint_dir=config.vla_checkpoint_dir,
-            config_name=config.vla_config_name,
-            device=device,
+        client = VLAClient(
+            server_url=f"ws://localhost:{config.vla_server_port}",
+            prompt=config.language_instruction,
+            action_horizon=config.vla_action_horizon,
+            action_dim=7,  # 6 joints + 1 gripper (server returns 7D)
         )
-        return hook
+        if client.is_connected():
+            print(f"[RLT] VLA client connected to ws://localhost:{config.vla_server_port}")
+            return client
+        else:
+            print("[RLT] WARNING: VLA client could not connect")
+            return None
     except Exception as e:
-        print(f"[RLT] WARNING: Could not load VLA: {e}")
-        print("[RLT] Running without VLA (random reference actions)")
+        print(f"[RLT] WARNING: VLA client creation failed: {e}")
         return None
 
 
-def load_rl_token_model(config: RLTConfig, device: str = "cuda"):
-    """Load trained RL Token encoder."""
+def load_rl_token_model(config: RLTConfig, device: str = "cpu"):
+    """Load trained RL Token encoder.
+    
+    Always loads on CPU first to avoid CUDA context issues,
+    then optionally moves to GPU.
+    """
     import torch
     from rlt.models.rl_token import RLTokenModel
 
@@ -69,7 +89,8 @@ def load_rl_token_model(config: RLTConfig, device: str = "cuda"):
         print("[RLT] Running without RL Token (zero embeddings)")
         return None
 
-    ckpt = torch.load(ckpt_path, weights_only=False, map_location=device)
+    # Always load on CPU first to avoid CUDA issues
+    ckpt = torch.load(ckpt_path, weights_only=False, map_location="cpu")
     cfg = ckpt["config"]
     model = RLTokenModel(
         embed_dim=cfg["embed_dim"],
@@ -82,14 +103,23 @@ def load_rl_token_model(config: RLTConfig, device: str = "cuda"):
     )
     model.load_state_dict(ckpt["model"])
     model.eval()
-    if device == "cuda":
+    
+    # Move to GPU only if requested AND available
+    if device == "cuda" and torch.cuda.is_available():
         model = model.cuda()
+        print(f"[RLT] RL Token model on CUDA")
+    else:
+        print(f"[RLT] RL Token model on CPU")
+    
     print(f"[RLT] Loaded RL Token model (loss={ckpt['loss']:.5f}, step={ckpt['step']})")
     return model
 
 
 def create_sac_agent(config: RLTConfig):
-    """Create the SAC agent for residual learning."""
+    """Create the SAC agent for residual learning.
+    
+    SAC runs on JAX CPU (lightweight MLPs, no GPU needed).
+    """
     from rlt.agents.sac_agent import RLTSACAgent
 
     obs_dim = config.token_dim + config.proprio_dim + (config.chunk_size * config.action_dim)
@@ -108,24 +138,8 @@ def create_sac_agent(config: RLTConfig):
         temp_lr=config.temp_lr,
         beta=config.beta,
     )
-    print(f"[RLT] SAC agent created (obs={obs_dim}, action={action_dim})")
+    print(f"[RLT] SAC agent created (obs={obs_dim}, action={action_dim}, device=cpu/jax)")
     return agent
-
-
-def load_serl_demos(config: RLTConfig) -> list:
-    """Load existing SERL demonstration transitions."""
-    all_transitions = []
-    for path in config.demo_paths:
-        p = Path(path)
-        if p.exists():
-            with open(p, "rb") as f:
-                transitions = pkl.load(f)
-            all_transitions.extend(transitions)
-            print(f"[RLT] Loaded {len(transitions)} transitions from {p.name}")
-        else:
-            print(f"[RLT] WARNING: Demo file not found: {path}")
-    print(f"[RLT] Total demo transitions: {len(all_transitions)}")
-    return all_transitions
 
 
 def run_warmup_episodes(
@@ -340,7 +354,7 @@ def run_training(
             if agent is not None:
                 agent.save(str(ckpt_path))
             else:
-                print(f"  [Checkpoint] → {ckpt_path} (no agent to save)")
+                print(f"  [Checkpoint] \u2192 {ckpt_path} (no agent to save)")
 
             # Save best
             recent_50 = results[-50:]
@@ -349,7 +363,7 @@ def run_training(
                 best_sr = current_sr
                 best_path = ckpt_dir / "best.pkl"
                 agent.save(str(best_path))
-                print(f"  [Best] SR={best_sr:.0%} → {best_path}")
+                print(f"  [Best] SR={best_sr:.0%} \u2192 {best_path}")
 
     # ── Final summary ────────────────────────────────────────────────────
     print(f"\n{'='*60}")
@@ -411,16 +425,19 @@ def run_eval(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="RLT Training — Peg Insertion")
+    parser = argparse.ArgumentParser(description="RLT Training \u2014 Peg Insertion")
     parser.add_argument("--task", default="peg_insertion",
                         choices=list(RLT_CONFIG_MAPPING.keys()))
     parser.add_argument("--fake_env", action="store_true",
                         help="Run without hardware (for testing)")
     parser.add_argument("--no_vla", action="store_true",
-                        help="Skip VLA loading (random reference)")
+                        help="Skip VLA connection (random reference)")
     parser.add_argument("--no_rl", action="store_true",
                         help="Disable RL agent (random residuals)")
-    parser.add_argument("--device", default="cuda")
+    parser.add_argument("--no_rl_token", action="store_true",
+                        help="Skip RL Token model (zero embeddings)")
+    parser.add_argument("--device", default="cpu",
+                        help="Device for RL Token model (cpu recommended)")
     parser.add_argument("--warmup_only", action="store_true",
                         help="Only run warmup episodes (VLA-only baseline)")
     parser.add_argument("--eval_only", action="store_true",
@@ -446,9 +463,8 @@ def main():
     print(f"\n{sep}")
     print(f"  RLT-UR5e \u2014 {config.task_name.upper()}")
     print(f"{sep}")
-    print(f"  VLA: {config.vla_config_name}")
+    print(f"  VLA server: ws://localhost:{config.vla_server_port}")
     print(f"  RL Token: {config.rl_token_checkpoint}")
-    print(f"  Demos: {len(config.demo_paths)} files")
     print(f"  Chunk size: {config.chunk_size}")
     print(f"  Max residual: pos={config.max_residual_pos*1000:.1f}mm, "
           f"rot={np.degrees(config.max_residual_rot):.1f}\u00b0")
@@ -460,18 +476,20 @@ def main():
         print(f"  Mode: FULL RLT TRAINING")
     print()
 
-    # ── Load models ──────────────────────────────────────────────────────
-    vla_hook = None
-    rl_token_model = None
-
+    # ── Load VLA client (websocket to server) ────────────────────────────
+    vla_client = None
     if not args.no_vla and not args.fake_env:
-        vla_hook = load_vla_hook(config, device=args.device)
+        vla_client = load_vla_client(config)
+
+    # ── Load RL Token model ──────────────────────────────────────────────
+    rl_token_model = None
+    if not args.no_rl_token and not args.fake_env:
         rl_token_model = load_rl_token_model(config, device=args.device)
 
     # ── Create environment ───────────────────────────────────────────────
     env = UR5eRLTEnv(
         config=config,
-        vla_hook=vla_hook,
+        vla_client=vla_client,
         rl_token_model=rl_token_model,
         fake_env=args.fake_env,
     )
@@ -515,7 +533,7 @@ def main():
         chunk_size=config.chunk_size,
     )
 
-    print(f"[RLT] Demo buffer initialized (empty — will fill from warmup)")
+    print(f"[RLT] Buffers created (online={config.replay_buffer_capacity:,}, demo=50k)")
 
     # ── Warmup ───────────────────────────────────────────────────────────
     warmup_results = run_warmup_episodes(env, config, online_buffer)

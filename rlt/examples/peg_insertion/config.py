@@ -54,7 +54,7 @@ class RLTConfig:
     vla_config_name: str = "pi0_fast_ur5e_peg_insertion_lora"
     vla_checkpoint_dir: str = (
         "openpi_ur5e/openpi-ur5e/checkpoints/"
-        "pi0_fast_ur5e_peg_insertion_lora/peg_insertion_9demos/29999"
+        "pi0_fast_ur5e_peg_insertion_lora/peg_insertion_50demos_v2/29999"
     )
     vla_server_port: int = 8000  # OpenPI WebSocket server port
     vla_action_horizon: int = 30  # π0-FAST predicts 30 steps ahead

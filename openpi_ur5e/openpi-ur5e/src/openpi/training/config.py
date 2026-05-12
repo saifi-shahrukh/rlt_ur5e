@@ -1406,11 +1406,11 @@ _CONFIGS = [
             action_horizon=30,                    # predict 30 future actions (1 second at 30fps)
         ),
         data=LeRobotUR5DualCamDataConfig(
-            repo_id="saifi/ur5e-peg-insertion-dual",   # dataset with wrist + overhead cameras
+            repo_id="saifi/ur5e-peg-insertion-50demos-v2",   # dataset with wrist + overhead cameras
             base_config=DataConfig(
                 prompt_from_task=True,             # use task string as language prompt
             ),
-            assets=AssetsConfig(asset_id="saifi/ur5e-peg-insertion-dual"),
+            assets=AssetsConfig(asset_id="saifi/ur5e-peg-insertion-50demos-v2"),
             extra_delta_transform=True,           # convert actions to delta (relative) format
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
@@ -1445,11 +1445,11 @@ _CONFIGS = [
             paligemma_lora_rank=4,                # rank=4 saves ~3.7 GiB vs rank=16
         ),
         data=LeRobotUR5DualCamDataConfig(
-            repo_id="saifi/ur5e-peg-insertion-dual",
+            repo_id="saifi/ur5e-peg-insertion-50demos-v2",
             base_config=DataConfig(
                 prompt_from_task=True,
             ),
-            assets=AssetsConfig(asset_id="saifi/ur5e-peg-insertion-dual"),
+            assets=AssetsConfig(asset_id="saifi/ur5e-peg-insertion-50demos-v2"),
             extra_delta_transform=True,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_fast_base/params"),
@@ -1462,7 +1462,7 @@ _CONFIGS = [
         keep_period=5_000,
         save_interval=5_000,
         batch_size=1,                             # RTX 5070 Ti 16GB: batch=1 is minimum
-        grad_accumulation_steps=8,                # Effective batch=8 (smoother gradients)
+        grad_accumulation_steps=1,                # Set to 1 to avoid OOM; try 2-4 if memory allows
         num_workers=4,
     ),
     #
@@ -1481,11 +1481,11 @@ _CONFIGS = [
             action_horizon=30,
         ),
         data=LeRobotUR5DualCamDataConfig(
-            repo_id="saifi/ur5e-peg-insertion-dual",
+            repo_id="saifi/ur5e-peg-insertion-50demos-v2",
             base_config=DataConfig(
                 prompt_from_task=True,
             ),
-            assets=AssetsConfig(asset_id="saifi/ur5e-peg-insertion-dual"),
+            assets=AssetsConfig(asset_id="saifi/ur5e-peg-insertion-50demos-v2"),
             extra_delta_transform=True,
         ),
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),

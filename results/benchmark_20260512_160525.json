@@ -1,0 +1,51 @@
+{
+  "timestamp": "20260512_160525",
+  "results": [
+    {
+      "mode": "VLA-only",
+      "success_rate": 0.1,
+      "successes": 1,
+      "total": 10,
+      "mean_episode_length": 10.0,
+      "results": [
+        true,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false
+      ]
+    },
+    {
+      "mode": "VLA+RLT",
+      "success_rate": 0.1,
+      "successes": 1,
+      "total": 10,
+      "mean_episode_length": 10.0,
+      "mean_residual_norm": 0.050977625399827954,
+      "results": [
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        true,
+        false,
+        false,
+        false
+      ]
+    },
+    {
+      "mode": "SERL",
+      "success_rate": 0.0,
+      "successes": 0,
+      "total": 10,
+      "note": "Not implemented yet"
+    }
+  ]
+}

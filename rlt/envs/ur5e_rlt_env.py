@@ -2,19 +2,23 @@
 UR5e RLT Environment — Bridges VLA + RL Token + SERL Hardware.
 
 This wraps the existing ur5e_hil_serl environment and adds:
-  1. VLA inference (π0-FAST/π0/π0.5) for reference actions ã
-  2. RL Token extraction (z_rl from RLTokenModel)
+  1. VLA inference via WebSocket client (π0-FAST/π0/π0.5 server)
+  2. RL Token extraction (z_rl from RLTokenModel) — optional
   3. Open-loop chunk execution (C=10 steps between RL decisions)
   4. Residual action application (final = VLA + residual)
 
 The RL agent sees:
-  obs = {"z_rl": (512,), "proprio": (19,), "ref_chunk": (C, action_dim)}
+  obs = [z_rl (512) | proprio (19) | ref_chunk_flat (C*action_dim)]
 
 And outputs:
-  residual_chunk: (C, action_dim)  — small corrections to VLA actions
+  residual_flat: (C * action_dim,) in [-1, 1] — small corrections to VLA actions
 
 The env executes:
-  final_action[t] = ref_chunk[t] + clip(residual_chunk[t], max_residual)
+  final_action[t] = ref_chunk[t] + clip(residual[t] * max_residual)
+
+Architecture (separate processes):
+  Terminal 1: VLA server (openpi venv, Python 3.11, JAX+GPU)
+  Terminal 2: RLT training (ur5e_hil_serl venv, Python 3.10, JAX CPU + PyTorch GPU)
 """
 from __future__ import annotations
 
@@ -31,8 +35,8 @@ class UR5eRLTEnv(gym.Env):
     """RLT environment wrapping the existing SERL UR5e setup.
 
     This environment:
-    - Calls the VLA server at each chunk boundary to get reference actions
-    - Extracts z_rl from VLM embeddings via the RL Token model
+    - Calls the VLA WebSocket server at each chunk boundary for reference actions
+    - Optionally extracts z_rl from VLM embeddings via the RL Token model
     - Executes C steps open-loop on the robot
     - Returns sparse reward from the reward classifier
 
@@ -43,7 +47,7 @@ class UR5eRLTEnv(gym.Env):
     def __init__(
         self,
         config,
-        vla_hook=None,
+        vla_client=None,
         rl_token_model=None,
         serl_env=None,
         fake_env: bool = False,
@@ -51,14 +55,14 @@ class UR5eRLTEnv(gym.Env):
         """
         Args:
             config: RLTConfig dataclass with all parameters
-            vla_hook: Pi05Hook instance (None = no VLA, random reference)
+            vla_client: VLAClient instance (websocket to VLA server)
             rl_token_model: RLTokenModel instance (None = zero z_rl)
             serl_env: Pre-built SERL environment (None = create from config)
             fake_env: If True, don't connect to hardware
         """
         super().__init__()
         self.config = config
-        self.vla_hook = vla_hook
+        self.vla_client = vla_client
         self.rl_token_model = rl_token_model
         self.fake_env = fake_env
 
@@ -89,9 +93,7 @@ class UR5eRLTEnv(gym.Env):
 
         # Episode tracking
         self.episode_step = 0
-        self.max_episode_chunks = config.total_episodes if hasattr(config, 'max_chunks_per_episode') else 10
-        # Each episode: max 10 chunks × 10 steps = 100 steps (matches SERL)
-        self.max_episode_chunks = 10
+        self.max_episode_chunks = 10  # 10 chunks × 10 steps = 100 steps at 10Hz = 10s
 
         # State
         self._last_raw_obs = None
@@ -100,13 +102,19 @@ class UR5eRLTEnv(gym.Env):
         self._current_ref_chunk = np.zeros(
             (self.chunk_size, self.action_dim), dtype=np.float32
         )
+        # Track joint state for VLA queries
+        self._current_joints = np.zeros(6, dtype=np.float32)
+        self._current_gripper = 0.9686  # Default closed
 
     def _create_serl_env(self, fake_env: bool):
         """Create the standard SERL peg insertion environment.
 
         This reuses your existing working setup with all wrappers:
-        GripperClose → KeyboardIntervention → RelativeFrame → Quat2Euler → SERLObs → Chunking
+        GripperClose → RelativeFrame → Quat2Euler → SERLObs → Chunking
         """
+        if fake_env:
+            return None
+
         try:
             sys.path.insert(0, str(Path(__file__).parents[2] / "ur5e_hil_serl"))
             sys.path.insert(0, str(Path(__file__).parents[2] / "ur5e_hil_serl" / "serl_robot_infra"))
@@ -122,81 +130,77 @@ class UR5eRLTEnv(gym.Env):
             return env
         except Exception as e:
             print(f"[UR5eRLTEnv] Warning: Could not create SERL env: {e}")
-            print("[UR5eRLTEnv] Using dummy environment")
+            print(f"[UR5eRLTEnv] Falling back to dummy environment")
             return None
 
-    def _get_vla_embeddings_and_reference(self, raw_obs: dict) -> tuple[np.ndarray, np.ndarray]:
-        """Call VLA to get embeddings and reference actions.
+    def _get_vla_reference(self, raw_obs: dict) -> np.ndarray:
+        """Call VLA server to get reference actions.
 
         Args:
             raw_obs: SERL observation dict with images and state
 
         Returns:
-            z_rl: (token_dim,) compressed RL token
-            ref_chunk: (chunk_size, action_dim) VLA reference actions
+            ref_chunk: (chunk_size, action_dim) VLA reference actions (delta tcp)
         """
-        if self.vla_hook is None:
-            # No VLA — return zeros (for testing / warmup)
-            z_rl = np.zeros(self.token_dim, dtype=np.float32)
-            ref_chunk = np.zeros((self.chunk_size, self.action_dim), dtype=np.float32)
-            return z_rl, ref_chunk
+        if self.vla_client is None:
+            # No VLA — return zeros (robot stays in place)
+            return np.zeros((self.chunk_size, self.action_dim), dtype=np.float32)
 
         try:
-            # Prepare observation for VLA
-            vla_obs = {}
+            # Extract images from SERL observation
+            images = {}
             if "images" in raw_obs:
-                # SERL format: {"images": {"wrist_1": ..., "overview": ...}}
-                for key, img in raw_obs["images"].items():
-                    if img.ndim == 4:  # (1, H, W, C) stacked
-                        img = img[0]
-                    vla_obs[key] = img
+                img_dict = raw_obs["images"]
+                # Map SERL camera names to OpenPI names
+                key_mapping = {
+                    "wrist_1": "wrist_image_left",
+                    "wrist_2": "wrist_image_right",
+                    "overview": "exterior_image_1_left",
+                }
+                for serl_key, openpi_key in key_mapping.items():
+                    if serl_key in img_dict:
+                        img = img_dict[serl_key]
+                        if img.ndim == 4:  # (1, H, W, C) stacked
+                            img = img[0]
+                        images[openpi_key] = img
+
+            # Extract joint state
+            joints = self._current_joints
+            gripper = self._current_gripper
+
             if "state" in raw_obs:
                 state = raw_obs["state"]
-                if isinstance(state, dict):
-                    # Concat all state components
-                    vla_obs["state"] = np.concatenate([
-                        state.get("tcp_pose", np.zeros(6)),
-                        state.get("tcp_vel", np.zeros(6)),
-                        state.get("tcp_force", np.zeros(3)),
-                        state.get("tcp_torque", np.zeros(3)),
-                        state.get("gripper_pose", np.zeros(1)),
-                    ])
-                else:
-                    vla_obs["state"] = state.flatten()
+                if isinstance(state, np.ndarray) and len(state) >= 6:
+                    # First 6 values are joint angles
+                    joints = state[:6].astype(np.float32)
+                elif isinstance(state, dict):
+                    if "joint_position" in state:
+                        joints = np.array(state["joint_position"][:6], dtype=np.float32)
+                    elif "tcp_pose" in state:
+                        # tcp_pose is (6,) [x,y,z,rx,ry,rz] - not joints!
+                        # We need actual joint positions
+                        pass
 
-            # Get VLM embeddings + action chunk
-            z_tokens, full_ref = self.vla_hook.get_embeddings_and_actions(
-                vla_obs, prompt=self.config.language_instruction
+            # Call VLA server via websocket
+            actions = self.vla_client.get_actions(
+                joint_position=joints,
+                gripper_position=gripper,
+                images=images,
             )
-            # z_tokens: (N_prefix, 2048), full_ref: (H, 7)
+            # actions: (action_horizon, 7) — absolute joint targets from server
+            # The server already applies AbsoluteActions transform
 
-            # Compress to RL token
-            if self.rl_token_model is not None:
-                import torch
-                z_t = torch.tensor(z_tokens, dtype=torch.float32).unsqueeze(0)
-                if next(self.rl_token_model.parameters()).is_cuda:
-                    z_t = z_t.cuda()
-                z_rl = self.rl_token_model.extract(z_t).squeeze(0).cpu().numpy()
-            else:
-                # No RL token model — use mean pooling as fallback
-                z_rl = z_tokens.mean(axis=0)[:self.token_dim]
+            # Convert absolute targets to delta (relative to current joints)
+            # The robot controller expects delta tcp, not absolute joints
+            # But the VLA outputs absolute joint positions after AbsoluteActions
+            # We need: delta = target - current
+            ref_deltas = actions[:self.chunk_size, :self.action_dim] - joints[:self.action_dim]
 
-            # Extract reference chunk (first C actions, trim to action_dim)
-            ref_chunk = full_ref[:self.chunk_size, :self.action_dim].copy()
-
-            # Pad if VLA returned fewer actions than chunk_size
-            if ref_chunk.shape[0] < self.chunk_size:
-                pad = np.zeros((self.chunk_size - ref_chunk.shape[0], self.action_dim))
-                ref_chunk = np.concatenate([ref_chunk, pad], axis=0)
-
-            return z_rl.astype(np.float32), ref_chunk.astype(np.float32)
+            return ref_deltas.astype(np.float32)
 
         except Exception as e:
             print(f"[UR5eRLTEnv] VLA inference failed: {e}")
-            return (
-                np.zeros(self.token_dim, dtype=np.float32),
-                np.zeros((self.chunk_size, self.action_dim), dtype=np.float32)
-            )
+            return np.zeros((self.chunk_size, self.action_dim), dtype=np.float32)
 
     def _get_proprio(self, raw_obs: dict) -> np.ndarray:
         """Extract proprioceptive state from SERL observation."""
@@ -206,16 +210,29 @@ class UR5eRLTEnv(gym.Env):
         if "state" in raw_obs:
             state = raw_obs["state"]
             if isinstance(state, np.ndarray):
-                return state.flatten()[:self.proprio_dim].astype(np.float32)
+                proprio = state.flatten()[:self.proprio_dim]
+                return proprio.astype(np.float32)
             elif isinstance(state, dict):
                 parts = []
                 for key in ["tcp_pose", "tcp_vel", "tcp_force", "tcp_torque", "gripper_pose"]:
                     if key in state:
                         parts.append(np.array(state[key]).flatten())
-                proprio = np.concatenate(parts) if parts else np.zeros(self.proprio_dim)
-                return proprio[:self.proprio_dim].astype(np.float32)
+                if parts:
+                    proprio = np.concatenate(parts)
+                    return proprio[:self.proprio_dim].astype(np.float32)
 
         return np.zeros(self.proprio_dim, dtype=np.float32)
+
+    def _update_joint_state(self, raw_obs: dict):
+        """Update cached joint state from observation (for VLA queries)."""
+        if raw_obs is None:
+            return
+        if "state" in raw_obs:
+            state = raw_obs["state"]
+            if isinstance(state, np.ndarray) and len(state) >= 6:
+                self._current_joints = state[:6].astype(np.float32)
+            elif isinstance(state, dict) and "joint_position" in state:
+                self._current_joints = np.array(state["joint_position"][:6], dtype=np.float32)
 
     def _build_obs(self) -> np.ndarray:
         """Build flat observation vector for RL agent."""
@@ -232,16 +249,18 @@ class UR5eRLTEnv(gym.Env):
         if self.serl_env is not None and not self.fake_env:
             raw_obs, info = self.serl_env.reset(**kwargs)
         else:
-            # Fake env: generate dummy observation matching SERL format
+            # Fake env: generate dummy observation
             raw_obs = self._make_fake_obs()
             info = {}
 
         self._last_raw_obs = raw_obs
+        self._update_joint_state(raw_obs)
 
-        # Get VLA prediction for initial state
-        self._current_z_rl, self._current_ref_chunk = \
-            self._get_vla_embeddings_and_reference(raw_obs)
+        # Get VLA reference actions for initial state
+        self._current_ref_chunk = self._get_vla_reference(raw_obs)
         self._current_proprio = self._get_proprio(raw_obs)
+        # z_rl stays zero without embeddings (RL Token needs VLM hook, not available via websocket)
+        self._current_z_rl = np.zeros(self.token_dim, dtype=np.float32)
 
         obs = self._build_obs()
         return obs, info
@@ -297,6 +316,7 @@ class UR5eRLTEnv(gym.Env):
                         break
 
         self._last_raw_obs = raw_obs
+        self._update_joint_state(raw_obs)
         self.episode_step += 1
 
         # Check max chunks
@@ -305,15 +325,14 @@ class UR5eRLTEnv(gym.Env):
 
         # Get new VLA prediction for next chunk
         if not (terminated or truncated):
-            self._current_z_rl, self._current_ref_chunk = \
-                self._get_vla_embeddings_and_reference(raw_obs)
+            self._current_ref_chunk = self._get_vla_reference(raw_obs)
         self._current_proprio = self._get_proprio(raw_obs)
 
         obs = self._build_obs()
 
         # Add RLT-specific info
-        info["residual_norm"] = np.linalg.norm(residual_scaled)
-        info["ref_norm"] = np.linalg.norm(self._current_ref_chunk)
+        info["residual_norm"] = float(np.linalg.norm(residual_scaled))
+        info["ref_norm"] = float(np.linalg.norm(self._current_ref_chunk))
         info["chunk_steps_executed"] = min(i + 1, self.chunk_size)
 
         return obs, total_reward, terminated, truncated, info
@@ -339,6 +358,12 @@ class UR5eRLTEnv(gym.Env):
     def close(self):
         """Clean up resources."""
         if self.serl_env is not None:
-            self.serl_env.close()
-        if self.vla_hook is not None:
-            self.vla_hook.close()
+            try:
+                self.serl_env.close()
+            except:
+                pass
+        if self.vla_client is not None:
+            try:
+                self.vla_client.close()
+            except:
+                pass

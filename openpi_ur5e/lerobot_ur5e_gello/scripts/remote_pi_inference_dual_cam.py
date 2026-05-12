@@ -107,8 +107,12 @@ def inference_loop(client: WebsocketClientPolicy, robot: Robot, events: dict, fp
                 "observation/joint_position": np.array(
                     [obs[f"joint_{i}"] for i in range(6)], dtype=np.float32
                 ),
+                # IMPORTANT: Gripper must match training data format.
+                # Training data has gripper=0.9686 (constant, closed).
+                # With quantile norm (q99-q01=0), any deviation is amplified 1e6x.
+                # So we hardcode the training value to prevent state corruption.
                 "observation/gripper_position": np.array(
-                    [obs["gripper"]], dtype=np.float32
+                    [0.9686274528503418], dtype=np.float32
                 ),
                 "prompt": prompt,
                 "observation/exterior_image_1_left": overview_224,
