@@ -38,13 +38,14 @@ export XLA_PYTHON_CLIENT_PREALLOCATE=true
 export XLA_FLAGS="--xla_gpu_unsafe_fallback_to_driver_on_ptxas_not_found=true"
 export JAX_TRACEBACK_FILTERING=off
 
-# W&B
+# W&B — resume the existing run (wandb_id.txt has the run ID)
 WANDB_KEY_FILE="${HOME}/.config/wandb/api_key"
 if [[ -f "${WANDB_KEY_FILE}" ]]; then
     export WANDB_API_KEY=$(cat "${WANDB_KEY_FILE}")
 elif [[ -f "${HOME}/.netrc" ]]; then
     export WANDB_API_KEY=$(awk '/api.wandb.ai/{found=1} found && /password/{print $2; exit}' ~/.netrc)
 fi
+# If no API key available, fall back to offline
 [[ -z "${WANDB_API_KEY:-}" ]] && export WANDB_MODE=offline
 
 # ─── Pre-flight ──────────────────────────────────────────────────────────────

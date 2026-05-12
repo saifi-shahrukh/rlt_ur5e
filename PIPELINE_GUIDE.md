@@ -56,19 +56,38 @@ Expected output:
 
 ## Phase 2: Download Checkpoints to Robot Workstation
 
-Run from your LOCAL robot workstation (not HPC):
+Transfer path: HPC -> WSL2 (r10028) -> Physical Ubuntu (172.22.1.188)
+(Direct HPC -> Ubuntu not possible due to network security)
 
-  cd ~/ur5e_hande_workspace/rlt_ur5e
-  bash hpc/05_download_checkpoints.sh
+### Step 2a: HPC -> WSL2 (from WSL2 terminal)
 
-Choose option 5 for params-only (smallest download, sufficient for inference).
-Or option 1 for full checkpoints (needed if you want to resume training later).
-
-Manual rsync (if script not available locally):
-
+  # Download all checkpoints to WSL2
+  mkdir -p ~/hpc_checkpoints
   rsync -avz --progress \
     saifi@hpc-headnode.iis.fhg.de:/data/beegfs/home/saifi/rlt_ur5e/openpi_ur5e/openpi-ur5e/checkpoints/ \
-    ~/ur5e_hande_workspace/rlt_ur5e/openpi_ur5e/openpi-ur5e/checkpoints/
+    ~/hpc_checkpoints/
+
+  # Or params-only (smaller):
+  for config in pi0_ur5e_peg_insertion_lora pi05_ur5e_peg_insertion_lora pi0_fast_ur5e_peg_insertion_lora; do
+    rsync -avz --progress \
+      saifi@hpc-headnode.iis.fhg.de:/data/beegfs/home/saifi/rlt_ur5e/openpi_ur5e/openpi-ur5e/checkpoints/${config}/peg_insertion_50demos/4999/params/ \
+      ~/hpc_checkpoints/${config}/peg_insertion_50demos/4999/params/
+  done
+
+### Step 2b: WSL2 -> Physical Ubuntu (from WSL2 terminal)
+
+  scp -r ~/hpc_checkpoints/ \
+    robolab-2@172.22.1.188:/home/robolab-2/ur5e_hande_workspace/rlt_ur5e/openpi_ur5e/openpi-ur5e/checkpoints/
+
+### Step 2c: Also transfer RL Token models (after Phase 5-6)
+
+  # HPC -> WSL2
+  scp saifi@hpc-headnode.iis.fhg.de:/data/beegfs/home/saifi/rlt_ur5e/checkpoints/rl_token/*_rl_token.pt \
+    ~/hpc_checkpoints/rl_token/
+
+  # WSL2 -> Ubuntu
+  scp ~/hpc_checkpoints/rl_token/*_rl_token.pt \
+    robolab-2@172.22.1.188:/home/robolab-2/ur5e_hande_workspace/rlt_ur5e/checkpoints/rl_token/
 
 ---
 
