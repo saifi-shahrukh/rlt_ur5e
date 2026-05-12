@@ -95,7 +95,7 @@ class EnvConfig(DefaultEnvConfig):
     FORCEMODE_LIMITS = np.array([0.5, 0.5, 0.5, 1.0, 1.0, 1.0], dtype=np.float32)
 
     # === Episode ===
-    MAX_EPISODE_LENGTH = 100
+    MAX_EPISODE_LENGTH = 300
 
 
 class TrainConfig(DefaultTrainingConfig):
