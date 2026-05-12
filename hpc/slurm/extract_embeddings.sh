@@ -72,7 +72,8 @@ echo "  ✓ Checkpoint found"
 echo ""
 
 # ─── Extract ─────────────────────────────────────────────────────────────────
-${VENV}/bin/python3.11 rlt/training/extract_embeddings.py \
+# PYTHONUNBUFFERED=1 ensures real-time output in SLURM logs
+PYTHONUNBUFFERED=1 ${VENV}/bin/python3.11 rlt/training/extract_embeddings.py \
     --config_name "${VLA_CONFIG}" \
     --checkpoint_dir "${VLA_CHECKPOINT}" \
     --output "${OUTPUT_FILE}" \
