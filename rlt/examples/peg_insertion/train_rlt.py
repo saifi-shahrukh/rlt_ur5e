@@ -533,7 +533,25 @@ def main():
         chunk_size=config.chunk_size,
     )
 
-    print(f"[RLT] Buffers created (online={config.replay_buffer_capacity:,}, demo=50k)")
+    # ── Load demo data for RLPD ──────────────────────────────────────────
+    from rlt.data.load_demos import load_serl_demos
+    demo_dir = Path("demo_data")
+    if demo_dir.exists():
+        n_loaded = load_serl_demos(
+            demo_dir=str(demo_dir),
+            buffer=demo_buffer,
+            chunk_size=config.chunk_size,
+            token_dim=config.token_dim,
+            proprio_dim=config.proprio_dim,
+            action_dim=config.action_dim,
+        )
+        print(f"[RLT] RLPD: {n_loaded} demo chunks loaded (ratio={config.demo_ratio})")
+    else:
+        print(f"[RLT] WARNING: No demo_data/ directory found. Running without RLPD.")
+        print(f"[RLT]   Copy SERL demos: cp -r serl_setup/.../demo_data/ demo_data/")
+
+    print(f"[RLT] Buffers created (online={config.replay_buffer_capacity:,}, demo={len(demo_buffer)})")
+    print(f"[RLT] Config: UTD={config.utd_ratio}, max_residual={config.max_residual_pos}rad, ref_reg={config.ref_reg_weight}")
 
     # ── Warmup ───────────────────────────────────────────────────────────
     warmup_results = run_warmup_episodes(env, config, online_buffer)

@@ -85,8 +85,10 @@ class RLTConfig:
     beta: float = 1.0          # Start at 1.0, decrease if too conservative
     # Reference action dropout (prevents policy from just copying VLA)
     ref_dropout: float = 0.5   # 50% of batches zero out reference
+    # Reference regularization: L2 penalty on residual (prevents RL divergence)
+    ref_reg_weight: float = 0.1  # lambda * ||residual||^2 added to actor loss
     # Update-to-data ratio (gradient steps per env step)
-    utd_ratio: int = 5         # Lower than RLPD's 20 (chunks are correlated)
+    utd_ratio: int = 20        # Match RLPD: 20 gradient steps per env step
     # Critic ensemble (paper: TD3-style, 2 Q-functions, take min)
     critic_ensemble_size: int = 2
     critic_subsample_size: int = 2
@@ -153,7 +155,7 @@ class RLTConfig:
     # These get scaled by max_residual_pos and converted to Cartesian via Jacobian.
     # VLA training data stats: q99 max joint delta = 0.048 rad/step
     # We use slightly larger range for exploration:
-    max_residual_pos: float = 0.05    # max joint delta in radians (~2.9°/step)
+    max_residual_pos: float = 0.10    # max joint delta in radians (~5.7°/step)
     max_residual_rot: float = 0.05    # same scale for all joints (not used separately)
 
     # ══════════════════════════════════════════════════════════════════════
