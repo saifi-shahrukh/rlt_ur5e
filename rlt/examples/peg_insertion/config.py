@@ -51,18 +51,20 @@ class RLTConfig:
     # ══════════════════════════════════════════════════════════════════════
     # VLA Base Policy
     # ══════════════════════════════════════════════════════════════════════
-    vla_config_name: str = "pi0_fast_ur5e_peg_insertion_lora"
+    # VLA model to use: "pi0", "pi0_fast", "pi05"
+    # pi0 (rank=16) recommended — better actions than pi0_fast (rank=4, broken DCT)
+    vla_config_name: str = "pi0_ur5e_peg_insertion_lora"
     vla_checkpoint_dir: str = (
         "openpi_ur5e/openpi-ur5e/checkpoints/"
-        "pi0_fast_ur5e_peg_insertion_lora/peg_insertion_50demos_v2/29999"
+        "pi0_ur5e_peg_insertion_lora/peg_insertion_50demos/4000"
     )
     vla_server_port: int = 8000  # OpenPI WebSocket server port
-    vla_action_horizon: int = 30  # π0-FAST predicts 30 steps ahead
+    vla_action_horizon: int = 30  # VLA predicts 30 steps ahead
 
     # ══════════════════════════════════════════════════════════════════════
     # RL Token Model
     # ══════════════════════════════════════════════════════════════════════
-    rl_token_checkpoint: str = "checkpoints/rl_token/peg_insertion_9demos_v1.pt"
+    rl_token_checkpoint: str = "checkpoints/rl_token/pi0_ur5e_peg_insertion_lora_rl_token.pt"
     token_dim: int = 512       # RL token bottleneck dimension
     embed_dim: int = 2048      # VLM hidden size (Gemma-2B)
 
