@@ -256,16 +256,49 @@ class UR5eRLTEnv(gym.Env):
                 gripper_position=gripper,
                 images=images,
             )
-            # actions: (action_horizon, 7) — absolute joint targets from server
-            # The server applies AbsoluteActions → output is absolute joint positions
-            #
-            # IMPORTANT: The VLA outputs JOINT-SPACE deltas, but the SERL env
-            # expects CARTESIAN deltas. These are incompatible action spaces.
-            # For now, we return zeros as the reference (VLA is broken anyway).
-            # When HPC produces a working VLA, we'll add J(q)·Δq conversion here.
-            #
-            # The SAC agent learns the full Cartesian action from scratch.
-            return np.zeros((self.chunk_size, self.action_dim), dtype=np.float32)
+            # actions: (action_horizon, 7) — ABSOLUTE joint targets from server
+            # Convert to joint DELTAS: delta_q = target_q - current_q
+            # Then convert joint deltas to Cartesian via Jacobian for SERL env
+
+            if actions is None or len(actions) == 0:
+                return np.zeros((self.chunk_size, self.action_dim), dtype=np.float32)
+
+            # Take first chunk_size actions
+            chunk_actions = actions[:self.chunk_size]  # (chunk_size, 7)
+            if len(chunk_actions) < self.chunk_size:
+                # Pad with last action if not enough
+                pad = np.tile(chunk_actions[-1:], (self.chunk_size - len(chunk_actions), 1))
+                chunk_actions = np.concatenate([chunk_actions, pad], axis=0)
+
+            # Compute joint deltas: VLA output is absolute targets
+            # delta_q[i] = action_q[i] - current_q (for first step)
+            # For subsequent steps: delta_q[i] = action_q[i] - action_q[i-1]
+            joint_deltas = np.zeros((self.chunk_size, 6), dtype=np.float32)
+            prev_q = joints.copy()
+            for i in range(self.chunk_size):
+                target_q = chunk_actions[i, :6]  # 6 joint angles
+                joint_deltas[i] = target_q - prev_q
+                prev_q = target_q
+
+            # Convert joint deltas to SERL Cartesian actions via Jacobian
+            ref_chunk = np.zeros((self.chunk_size, self.action_dim), dtype=np.float32)
+            q = joints.copy()
+            for i in range(self.chunk_size):
+                serl_action = self._kinematics.joint_delta_to_serl_action(joint_deltas[i], q)
+                ref_chunk[i] = serl_action
+                q = q + joint_deltas[i]  # update for next step
+
+            # Debug: print first VLA reference once
+            if not hasattr(self, '_vla_ref_printed'):
+                dq_mag = np.linalg.norm(joint_deltas[0])
+                ref_mag = np.linalg.norm(ref_chunk[0])
+                print(f"[UR5eRLTEnv] VLA ref: joint_delta[0]={joint_deltas[0]} (|dq|={dq_mag:.4f} rad)")
+                print(f"[UR5eRLTEnv] VLA ref: serl_action[0]={ref_chunk[0]} (|a|={ref_mag:.4f})")
+                print(f"[UR5eRLTEnv] VLA raw action[0]={chunk_actions[0, :6]}")
+                print(f"[UR5eRLTEnv] Current joints={joints}")
+                self._vla_ref_printed = True
+
+            return ref_chunk
 
         except Exception as e:
             print(f"[UR5eRLTEnv] VLA inference failed: {e}")
