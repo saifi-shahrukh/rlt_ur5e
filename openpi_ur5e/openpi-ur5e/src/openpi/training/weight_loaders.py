@@ -87,7 +87,7 @@ def _merge_params(loaded_params: at.Params, params: at.Params, *, missing_regex:
     flat_ref = flax.traverse_util.flatten_dict(params, sep="/")
     flat_loaded = flax.traverse_util.flatten_dict(loaded_params, sep="/")
 
-    # First, take all weights that are a subset of the reference weights.
+    # First, take all weights from loaded that match reference keys AND shapes.
     # Skip params with shape mismatches (e.g. action_in_proj when action_dim differs from base).
     result = {}
     for k, v in flat_loaded.items():
@@ -95,16 +95,20 @@ def _merge_params(loaded_params: at.Params, params: at.Params, *, missing_regex:
             ref_shape = flat_ref[k].shape if hasattr(flat_ref[k], 'shape') else None
             loaded_shape = v.shape if hasattr(v, 'shape') else None
             if ref_shape is not None and loaded_shape is not None and ref_shape != loaded_shape:
-                # Shape mismatch — skip this param (will be randomly initialized)
+                # Shape mismatch — use reference (random init) instead of loaded
+                result[k] = flat_ref[k]
                 continue
             result[k] = v.astype(flat_ref[k].dtype) if v.dtype != flat_ref[k].dtype else v
 
     flat_loaded.clear()
 
-    # Then, merge any missing weights as defined by the missing regex.
+    # Then, merge any missing weights from reference.
+    # This includes: LoRA params (matching missing_regex) AND any params
+    # that exist in model but not in checkpoint (e.g. action_out_proj for different action_dim).
     pattern = re.compile(missing_regex)
-    for k in {k for k in flat_ref if pattern.fullmatch(k)}:
+    for k in flat_ref:
         if k not in result:
+            # Always include missing params from reference (random init / ShapeDtypeStruct)
             result[k] = flat_ref[k]
 
     return flax.traverse_util.unflatten_dict(result, sep="/")
