@@ -61,16 +61,25 @@ for ep in range(10):
         step_count += 1
         total_reward += reward
         
-        # Print position every 20 steps
+        # Print ABSOLUTE TCP position directly from env internals
         if step_count % 20 == 0:
-            if 'state' in obs:
-                state = obs['state']
-                if hasattr(state, 'shape') and state.ndim > 1:
-                    state = state[0]
-                pos = state[:3] if len(state) >= 3 else state
-                print(f"  step={step_count:3d} | pos={pos[:3]} | reward={reward}")
-            else:
-                print(f"  step={step_count:3d} | reward={reward}")
+            try:
+                # Access the raw absolute TCP from base env
+                base = env
+                while hasattr(base, 'env'):
+                    base = base.env
+                abs_tcp = base.currpos[:3]  # absolute xyz in meters
+                target = np.array([0.36066, 0.08130, 0.090])
+                dist = np.linalg.norm(abs_tcp - target) * 1000  # mm
+                print(f"  step={step_count:3d} | TCP=[{abs_tcp[0]:.4f},{abs_tcp[1]:.4f},{abs_tcp[2]:.4f}]m | dist_to_target={dist:.1f}mm")
+            except Exception as e:
+                if 'state' in obs:
+                    state = obs['state']
+                    if hasattr(state, 'shape') and state.ndim > 1:
+                        state = state[0]
+                    print(f"  step={step_count:3d} | state[:6]={state[:6]} | reward={reward}")
+                else:
+                    print(f"  step={step_count:3d} | reward={reward}")
         
         if reward > 0:
             print(f"\n  *** SUCCESS! reward={reward} at step {step_count} ***")
