@@ -33,9 +33,14 @@ print("  Press Ctrl+C to stop.")
 print()
 print("="*60)
 
-# Create env with classifier
+# Create env — test both modes
+import sys
+use_classifier = '--classifier' in sys.argv
+print(f"  Mode: {'CLASSIFIER' if use_classifier else 'DISTANCE'} reward")
+print(f"  (pass --classifier to use image-based reward)")
+
 config = CONFIG_MAPPING['peg_insertion']()
-env = config.get_environment(fake_env=False, save_video=False, classifier=True)
+env = config.get_environment(fake_env=False, save_video=False, classifier=use_classifier)
 
 print("\n[TEST] Environment created with classifier")
 print(f"[TEST] Action space: {env.action_space.shape}")

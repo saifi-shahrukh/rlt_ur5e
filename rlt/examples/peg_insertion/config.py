@@ -128,7 +128,7 @@ class RLTConfig:
     # Reward
     # ══════════════════════════════════════════════════════════════════════
     # Use trained classifier (with consecutive frame filtering)
-    use_classifier: bool = True
+    use_classifier: bool = False
     classifier_checkpoint: str = "ur5e_hil_serl/examples/classifier_ckpt"
     classifier_threshold: float = 0.70
     consecutive_frames_needed: int = 3
