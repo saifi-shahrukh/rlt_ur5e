@@ -66,9 +66,17 @@ class MultiCameraBinaryRewardClassifierWrapper(gym.Wrapper):
     def step(self, action):
         start_time = time.time()
         obs, rew, done, truncated, info = self.env.step(action)
-        rew = self.compute_reward(obs)
-        done = done or rew
-        info["succeed"] = bool(rew)
+        # Override reward with classifier (ignore base env's distance reward)
+        classifier_rew = self.compute_reward(obs)
+        # Only terminate from classifier reward or time limit/safety — NOT from
+        # base env's distance-based reward (which causes false termination)
+        base_env_reward_fired = info.get("succeed", False)
+        if base_env_reward_fired and not classifier_rew:
+            # Base env said "success" but classifier disagrees → don't terminate
+            done = False
+        done = done or bool(classifier_rew)
+        rew = classifier_rew
+        info["succeed"] = bool(classifier_rew)
         if self.target_hz is not None:
             time.sleep(max(0, 1 / self.target_hz - (time.time() - start_time)))
         return obs, rew, done, truncated, info
