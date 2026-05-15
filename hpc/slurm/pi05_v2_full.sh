@@ -17,7 +17,7 @@ set -euo pipefail
 OPENPI="/data/beegfs/home/saifi/rlt_ur5e/openpi_ur5e/openpi-ur5e"
 VENV="${OPENPI}/.venv"
 CONFIG="pi05_ur5e_peg_insertion_v2_lora"
-EXP_NAME="peg_insertion_50demos"
+EXP_NAME="peg_insertion_50demos_4gpu"
 
 # ─── Environment ─────────────────────────────────────────────────────────────
 export PATH="${VENV}/bin:${HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin"
@@ -60,7 +60,7 @@ echo ""
 # ─── Train (resume from existing checkpoint if available) ────────────────────
 ${VENV}/bin/python3.11 scripts/train.py ${CONFIG} \
     --exp-name=${EXP_NAME} \
-    --resume \
+    --overwrite \
     --num-workers=16
 
 echo ""
