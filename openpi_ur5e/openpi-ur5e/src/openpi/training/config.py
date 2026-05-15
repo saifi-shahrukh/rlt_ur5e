@@ -1669,7 +1669,7 @@ _CONFIGS = [
         ema_decay=None,
         keep_period=5_000,
         save_interval=500,
-        batch_size=6,                             # V100 32GB: 2 images allows batch=6 (was 4 with 3 images)
+        batch_size=8,                             # 4 GPUs FSDP: batch=8 (2 per GPU), model sharded across GPUs
         grad_accumulation_steps=2,                # Effective batch=12
         num_workers=8,
     ),
